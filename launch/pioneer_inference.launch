@@ -1,0 +1,7 @@
+<launch>
+
+  <group ns="pioneer_inference">
+    <node pkg="pioneer_inference" name="agent1" type="agent" output="screen"/>
+  </group>
+
+</launch>
