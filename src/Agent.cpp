@@ -11,17 +11,25 @@
 Agent::Agent(ros::NodeHandle nHandle){
 	costmap.init_flag = true;
 
+	// sensor stuff
 	costSub = nHandle.subscribe("/map", 0, &Agent::costMapCallback, this);
 	locSub = nHandle.subscribe("/odom", 1, &Agent::locationCallback, this);
-	marketSub = nHandle.subscribe("/agent0/market", 1, &Agent::marketCallback, this);
-	mapUpdatesSub = nHandle.subscribe("/agent0/map", 1, &Agent::mapUpdatesCallback, this);
+	
+	// coordination stuff
+	marketSub_A = nHandle.subscribe("/agent1/market", 1, &Agent::marketCallback, this);
+	mapUpdatesSub_A = nHandle.subscribe("/agent1/map", 1, &Agent::mapUpdatesCallback_A, this);
 
+	marketSub_B = nHandle.subscribe("/agent2/market", 1, &Agent::marketCallback, this);
+	mapUpdatesSub_B = nHandle.subscribe("/agent2/map", 1, &Agent::mapUpdatesCallback_B, this);
+
+	// my coordination stuff
+	marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent0/market", 10);
+	locPub = nHandle.advertise<nav_msgs::Odometry>("/agent0/loc", 10);
+	mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent0/map", 10);
+
+	// rviz stuff
 	markerPub = nHandle.advertise<visualization_msgs::Marker>("/visualization_marker", 10);
 	goalPub =  nHandle.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 10);
-
-	marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent1/market", 10);
-	locPub = nHandle.advertise<nav_msgs::Odometry>("/agent1/loc", 10);
-	mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent1/map", 10);
 
 	missionTime = ros::Time::now();
 	timeOfLastReport = ros::Time::now();
@@ -33,6 +41,56 @@ Agent::Agent(ros::NodeHandle nHandle){
 
 	oLoc = Point(50,60);
 	float lastPlan = -1;
+}
+
+Point Agent::transform_A( Point p ){
+	Point po;
+
+	float pi = 3.14159265359;
+	float dTheta = pi/2;
+	float dx = -2;
+	float dy = -1;
+	po.x = dx + p.x*cos(dTheta) + p.y*sin(dTheta);
+	po.y = dy - p.x*sin(dTheta) + p.y*cos(dTheta);
+
+	return po;
+}
+
+void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission ){
+	
+	for(size_t i=0; i<transmission.data.size(); i+=3){
+		//x,y, val
+		Point t(transmission.data[i], transmission.data[i+1]);
+		Point p = transform_A( t );
+		if( costmap.cells.at<short>(p) != costmap.obsFree || costmap.cells.at<short>(p) != costmap.obsWall){
+			costmap.cells.at<short>(p) = transmission.data[i+2];
+		}
+	}
+}
+
+Point Agent::transform_B( Point p ){
+	Point po;
+
+	float pi = 3.14159265359;
+	float dTheta = pi/2;
+	float dx = -2;
+	float dy = -1;
+	po.x = dx + p.x*cos(dTheta) + p.y*sin(dTheta);
+	po.y = dy - p.x*sin(dTheta) + p.y*cos(dTheta);
+
+	return po;
+}
+
+void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission ){
+	
+	for(size_t i=0; i<transmission.data.size(); i+=3){
+		//x,y, val
+		Point t(transmission.data[i], transmission.data[i+1]);
+		Point p = transform_B( t );
+		if( costmap.cells.at<short>(p) != costmap.obsFree || costmap.cells.at<short>(p) != costmap.obsWall){
+			costmap.cells.at<short>(p) = transmission.data[i+2];
+		}
+	}
 }
 
 void Agent::publishNavGoalsToMoveBase(){
@@ -201,17 +259,6 @@ void Agent::publishMapUpdates(){
 	transmission.data.clear();
 	transmission.data.insert(transmission.data.end(), cm.begin(), cm.end());
 	mapUpdatesPub.publish( transmission );
-}
-
-void Agent::mapUpdatesCallback(  const std_msgs::Int16MultiArray& transmission ){
-	
-	for(size_t i=0; i<transmission.data.size(); i+=3){
-		//x,y, val
-		Point t(transmission.data[i], transmission.data[i+1]);
-		if( costmap.cells.at<short>(t) != costmap.obsFree || costmap.cells.at<short>(t) != costmap.obsWall){
-			costmap.cells.at<short>(t) = transmission.data[i+2];
-		}
-	}
 }
 
 

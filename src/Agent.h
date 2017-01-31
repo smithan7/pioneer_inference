@@ -58,19 +58,24 @@ using namespace cv;
 class Agent{
 public:
 
-	ros::Subscriber costSub, locSub, marketSub, mapUpdatesSub;
+	ros::Subscriber costSub, locSub, marketSub_A, mapUpdatesSub_A, marketSub_B, mapUpdatesSub_B;
 	ros::Publisher markerPub, goalPub, marketPub, locPub, mapUpdatesPub;
 
 	void costMapCallback(const nav_msgs::OccupancyGrid& cost_in );
 	void locationCallback( const nav_msgs::Odometry& locIn);
 	void marketCallback( const std_msgs::Float32MultiArray &marketOrders);
-	void mapUpdatesCallback( const std_msgs::Int16MultiArray& transmission );
+	void mapUpdatesCallback_A( const std_msgs::Int16MultiArray& transmission );
+	void mapUpdatesCallback_B( const std_msgs::Int16MultiArray& transmission );
+	Point transform_A(Point p);
+	Point transform_B(Point p);
 
 	void publishNavGoalsToMoveBase();
 	void publishRvizMarker(Point loc, float radius, int color, int id);
 	void publishMarket();
 	void publishMapUpdates();
 	void publishLoc(const nav_msgs::Odometry& locIn);
+
+
 
 	int iterCntr, iterPeriod;
 
