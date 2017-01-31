@@ -16,16 +16,16 @@ Agent::Agent(ros::NodeHandle nHandle){
 	locSub = nHandle.subscribe("/odom", 1, &Agent::locationCallback, this);
 	
 	// coordination stuff
-	marketSub_A = nHandle.subscribe("/agent1/market", 1, &Agent::marketCallback, this);
-	mapUpdatesSub_A = nHandle.subscribe("/agent1/map", 1, &Agent::mapUpdatesCallback_A, this);
+	marketSub_A = nHandle.subscribe("/agent0/market", 1, &Agent::marketCallback, this);
+	mapUpdatesSub_A = nHandle.subscribe("/agent0/map", 1, &Agent::mapUpdatesCallback_A, this);
 
 	marketSub_B = nHandle.subscribe("/agent2/market", 1, &Agent::marketCallback, this);
 	mapUpdatesSub_B = nHandle.subscribe("/agent2/map", 1, &Agent::mapUpdatesCallback_B, this);
 
 	// my coordination stuff
-	marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent0/market", 10);
-	locPub = nHandle.advertise<nav_msgs::Odometry>("/agent0/loc", 10);
-	mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent0/map", 10);
+	marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent1/market", 10);
+	locPub = nHandle.advertise<nav_msgs::Odometry>("/agent1/loc", 10);
+	mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent1/map", 10);
 
 	// rviz stuff
 	markerPub = nHandle.advertise<visualization_msgs::Marker>("/visualization_marker", 10);
@@ -48,10 +48,12 @@ Point Agent::transform_A( Point p ){
 
 	float pi = 3.14159265359;
 	float dTheta = pi/2;
-	float dx = -2;
-	float dy = -1;
-	po.x = dx + p.x*cos(dTheta) + p.y*sin(dTheta);
-	po.y = dy - p.x*sin(dTheta) + p.y*cos(dTheta);
+	float dx = -8;
+	float dy = 8;
+	float px = float(p.x - costmap.cells.cols/2);
+	float py = float(p.y - costmap.cells.rows/2);
+	po.x = round(dx + px*cos(dTheta) + py*sin(dTheta) + costmap.cells.cols/2);
+	po.y = round(dy - px*sin(dTheta) + py*cos(dTheta) + costmap.cells.rows/2);
 
 	return po;
 }
@@ -62,8 +64,10 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 		//x,y, val
 		Point t(transmission.data[i], transmission.data[i+1]);
 		Point p = transform_A( t );
-		if( costmap.cells.at<short>(p) != costmap.obsFree || costmap.cells.at<short>(p) != costmap.obsWall){
-			costmap.cells.at<short>(p) = transmission.data[i+2];
+		if(p.x > 0 && p.y > 0 && p.x < costmap.cells.cols && p.y < costmap.cells.rows){
+			if( costmap.cells.at<short>(p) != costmap.obsFree && costmap.cells.at<short>(p) != costmap.obsWall){
+				costmap.cells.at<short>(p) = transmission.data[i+2];
+			}
 		}
 	}
 }
@@ -73,11 +77,14 @@ Point Agent::transform_B( Point p ){
 
 	float pi = 3.14159265359;
 	float dTheta = pi/2;
-	float dx = -2;
-	float dy = -1;
-	po.x = dx + p.x*cos(dTheta) + p.y*sin(dTheta);
-	po.y = dy - p.x*sin(dTheta) + p.y*cos(dTheta);
+	float dx = 4;
+	float dy = 4;
+	float px = float(p.x - costmap.cells.cols/2);
+	float py = float(p.y - costmap.cells.rows/2);
+	po.x = round(dx + px*cos(dTheta) + py*sin(dTheta) + costmap.cells.cols/2);
+	po.y = round(dy - px*sin(dTheta) + py*cos(dTheta) + costmap.cells.rows/2);
 
+	return po;
 	return po;
 }
 
@@ -87,8 +94,10 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 		//x,y, val
 		Point t(transmission.data[i], transmission.data[i+1]);
 		Point p = transform_B( t );
-		if( costmap.cells.at<short>(p) != costmap.obsFree || costmap.cells.at<short>(p) != costmap.obsWall){
-			costmap.cells.at<short>(p) = transmission.data[i+2];
+		if(p.x > 0 && p.y > 0 && p.x < costmap.cells.cols && p.y < costmap.cells.rows){
+			if( costmap.cells.at<short>(p) != costmap.obsFree && costmap.cells.at<short>(p) != costmap.obsWall){
+				costmap.cells.at<short>(p) = transmission.data[i+2];
+			}
 		}
 	}
 }
