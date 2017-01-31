@@ -15,8 +15,8 @@ int main(int argc, char *argv[])
 
 	float obsThresh = 50;
 	float comThresh = 50;
-	int myIndex = 0;
-	int numAgents = 1;
+	int myIndex = 1;
+	int numAgents = 2;
 
 	Agent *agent = new Agent(nHandle);
 	agent->init(myIndex, obsThresh, comThresh, numAgents);

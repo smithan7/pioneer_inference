@@ -19,9 +19,9 @@ Agent::Agent(ros::NodeHandle nHandle){
 	markerPub = nHandle.advertise<visualization_msgs::Marker>("/visualization_marker", 10);
 	goalPub =  nHandle.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 10);
 
-	marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent0/market", 10);
-	locPub = nHandle.advertise<nav_msgs::Odometry>("/agent0/loc", 10);
-	mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent0/map", 10);
+	marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent1/market", 10);
+	locPub = nHandle.advertise<nav_msgs::Odometry>("/agent1/loc", 10);
+	mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent1/map", 10);
 
 	missionTime = ros::Time::now();
 	timeOfLastReport = ros::Time::now();
@@ -218,6 +218,7 @@ void Agent::mapUpdatesCallback(  const std_msgs::Int16MultiArray& transmission )
 void Agent::plan( string planMethod ){
 	lastPlan = ros::Time::now().toSec();
 
+	/*
 	//marketRelaySacrifice();
 	//marketReturnInfo();
 
@@ -253,7 +254,11 @@ void Agent::plan( string planMethod ){
 		//gLoc = reportToOperator();
 		//return;
 	}
-	
+	*/
+	if( checkForExplorationFinished() ){
+		gLoc = cLoc;
+		return;
+	}
 	// don't return or report, so explore
 	cout << "exploring" << endl;
 	planExplore(planMethod);
@@ -404,7 +409,7 @@ void Agent::act(){
 			cout << "waiting on location callback" << endl;
 		}
 
-		if( flag ){
+		if( flag && false){
 			if(cLoc == gLoc){
 				while(true){
 					Point g;
@@ -489,60 +494,6 @@ void Agent::pickMyColor(){
 	else if(this->myIndex == 9){
 		// white
 	}
-}
-
-Point Agent::reportToOperator(){
-
-	// simulate communication of operator, find node on graph that is closest to agent that is in coms of operator, return it
-	Mat tComs = Mat::zeros(costmap.cells.size(), CV_8UC1);
-	graphCoordination.simulateCommunication( oLoc, tComs, costmap);
-
-	vector<Point> comPts;
-	for(size_t i=0; i<graphCoordination.thinGraph.nodeLocations.size(); i++){
-		if( tComs.at<uchar>(graphCoordination.thinGraph.nodeLocations[i]) == 255 ){
-			comPts.push_back( graphCoordination.thinGraph.nodeLocations[i] );
-		}
-	}
-
-	vector<float> comDists;
-	vector<bool> trueDists;
-	float minDist = INFINITY;
-	int mindex = -1;
-	for(size_t i=0; i<comPts.size(); i++){
-
-		comDists.push_back( sqrt(pow(cLoc.x-comPts[i].x,2) + pow(cLoc.y-comPts[i].y,2) ));
-		trueDists.push_back( false );
-
-		if(comDists.back() < minDist){
-			minDist = comDists.back();
-			mindex = i;
-		}
-	}
-
-	if(mindex >= 0){
-		while( true ){ // find closest
-			if( trueDists[mindex]){
-				return comPts[mindex];
-			}
-			comDists[mindex] = costmap.aStarDist(cLoc, comPts[mindex]);
-			trueDists[mindex] = true;
-
-			minDist = INFINITY;
-			mindex= -1;
-			for(size_t i=0; i<comDists.size(); i++){
-				if(comDists[i] < minDist){
-					minDist = comDists[i];
-					mindex = i;
-				}
-			}
-		}
-	}
-
-	return oLoc;
-}
-
-Point Agent::returnToOperator(){
-	return oLoc;
 }
 
 
@@ -737,6 +688,42 @@ bool Agent::checkForExplorationFinished(){
 		return false;
 	}
 }
+
+void Agent::shareCostmap(Costmap &A, Costmap &B){
+	for(int i=0; i<A.cells.cols; i++){
+		for(int j=0; j<A.cells.rows; j++){
+			Point a(i,j);
+
+			// share cells
+
+			if(A.cells.at<short>(a) != B.cells.at<short>(a) ){ // do we think the same thing?
+				if(A.cells.at<short>(a) == A.unknown){
+					A.cells.at<short>(a) = B.cells.at<short>(a); // if A doesn't know, anything is better
+				}
+				else if(A.cells.at<short>(a) == A.infFree || A.cells.at<short>(a) == A.infWall){ // A think its inferred
+					if(B.cells.at<short>(a) == B.obsFree || B.cells.at<short>(a) == B.obsWall){ // B has observed
+						A.cells.at<short>(a) = B.cells.at<short>(a);
+					}
+				}
+				else if(B.cells.at<short>(a) == B.unknown){ // B doesn't know
+					B.cells.at<short>(a) = A.cells.at<short>(a); // B doesn't know, anything is better
+				}
+				else if(B.cells.at<short>(a) == B.infFree || B.cells.at<short>(a) == B.infWall){ // B think its inferred
+					if(A.cells.at<short>(a) == A.obsFree || A.cells.at<short>(a) == A.obsWall){ // A has observed
+						B.cells.at<short>(a) = A.cells.at<short>(a);
+					}
+				}
+			}
+		}
+	}
+}
+
+
+
+Agent::~Agent() {
+
+}
+
 
 bool Agent::lastReport(){
 
@@ -994,75 +981,56 @@ bool Agent::checkReportTime(){
 	}
 }
 
-void Agent::shareCostmap(Costmap &A, Costmap &B){
-	for(int i=0; i<A.cells.cols; i++){
-		for(int j=0; j<A.cells.rows; j++){
-			Point a(i,j);
+Point Agent::reportToOperator(){
 
-			// share cells
+	// simulate communication of operator, find node on graph that is closest to agent that is in coms of operator, return it
+	Mat tComs = Mat::zeros(costmap.cells.size(), CV_8UC1);
+	graphCoordination.simulateCommunication( oLoc, tComs, costmap);
 
-			if(A.cells.at<short>(a) != B.cells.at<short>(a) ){ // do we think the same thing?
-				if(A.cells.at<short>(a) == A.unknown){
-					A.cells.at<short>(a) = B.cells.at<short>(a); // if A doesn't know, anything is better
-				}
-				else if(A.cells.at<short>(a) == A.infFree || A.cells.at<short>(a) == A.infWall){ // A think its inferred
-					if(B.cells.at<short>(a) == B.obsFree || B.cells.at<short>(a) == B.obsWall){ // B has observed
-						A.cells.at<short>(a) = B.cells.at<short>(a);
-					}
-				}
-				else if(B.cells.at<short>(a) == B.unknown){ // B doesn't know
-					B.cells.at<short>(a) = A.cells.at<short>(a); // B doesn't know, anything is better
-				}
-				else if(B.cells.at<short>(a) == B.infFree || B.cells.at<short>(a) == B.infWall){ // B think its inferred
-					if(A.cells.at<short>(a) == A.obsFree || A.cells.at<short>(a) == A.obsWall){ // A has observed
-						B.cells.at<short>(a) = A.cells.at<short>(a);
-					}
-				}
-			}
-
-
-			// share search
-			/*
-			if(A.searchReward.at<float>(a) < B.searchReward.at<float>(a) ){ // do we think the same thing?
-				B.searchReward.at<float>(a) = A.searchReward.at<float>(a);
-			}
-			else if(A.searchReward.at<float>(a) > B.searchReward.at<float>(a)){
-				A.searchReward.at<float>(a) = B.searchReward.at<float>(a);
-			}
-
-			// share occ
-
-			float minA = INFINITY;
-			float minB = INFINITY;
-
-			if(1-A.occ.at<float>(a) > A.occ.at<float>(a) ){
-				minA = 1-A.occ.at<float>(a);
-			}
-			else{
-				minA = A.occ.at<float>(a);
-			}
-
-			if(1-B.occ.at<float>(a) > B.occ.at<float>(a) ){
-				minB = 1-B.occ.at<float>(a);
-			}
-			else{
-				minB = B.occ.at<float>(a);
-			}
-
-			if( minA < minB ){ // do we think the same thing?
-				B.occ.at<float>(a) = A.occ.at<float>(a);
-			}
-			else{
-				A.occ.at<float>(a) = B.occ.at<float>(a);
-			}
-			*/
+	vector<Point> comPts;
+	for(size_t i=0; i<graphCoordination.thinGraph.nodeLocations.size(); i++){
+		if( tComs.at<uchar>(graphCoordination.thinGraph.nodeLocations[i]) == 255 ){
+			comPts.push_back( graphCoordination.thinGraph.nodeLocations[i] );
 		}
 	}
+
+	vector<float> comDists;
+	vector<bool> trueDists;
+	float minDist = INFINITY;
+	int mindex = -1;
+	for(size_t i=0; i<comPts.size(); i++){
+
+		comDists.push_back( sqrt(pow(cLoc.x-comPts[i].x,2) + pow(cLoc.y-comPts[i].y,2) ));
+		trueDists.push_back( false );
+
+		if(comDists.back() < minDist){
+			minDist = comDists.back();
+			mindex = i;
+		}
+	}
+
+	if(mindex >= 0){
+		while( true ){ // find closest
+			if( trueDists[mindex]){
+				return comPts[mindex];
+			}
+			comDists[mindex] = costmap.aStarDist(cLoc, comPts[mindex]);
+			trueDists[mindex] = true;
+
+			minDist = INFINITY;
+			mindex= -1;
+			for(size_t i=0; i<comDists.size(); i++){
+				if(comDists[i] < minDist){
+					minDist = comDists[i];
+					mindex = i;
+				}
+			}
+		}
+	}
+
+	return oLoc;
 }
 
-
-
-Agent::~Agent() {
-
+Point Agent::returnToOperator(){
+	return oLoc;
 }
-
