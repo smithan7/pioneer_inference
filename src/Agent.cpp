@@ -404,7 +404,7 @@ void Agent::act(){
 			cout << "waiting on location callback" << endl;
 		}
 
-		if( flag ){
+        if( flag){
 			if(cLoc == gLoc){
 				while(true){
 					Point g;
