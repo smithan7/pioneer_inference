@@ -85,7 +85,6 @@ Point Agent::transform_B( Point p ){
 	po.y = round(dy - px*sin(dTheta) + py*cos(dTheta) + costmap.cells.rows/2);
 
 	return po;
-	return po;
 }
 
 void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission ){
