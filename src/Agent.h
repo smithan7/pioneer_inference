@@ -66,8 +66,17 @@ public:
 	void marketCallback( const std_msgs::Float32MultiArray &marketOrders);
 	void mapUpdatesCallback_A( const std_msgs::Int16MultiArray& transmission );
 	void mapUpdatesCallback_B( const std_msgs::Int16MultiArray& transmission );
-	Point transform_A(Point p);
-	Point transform_B(Point p);
+
+    double alignCostmap( Mat &set, Mat &sub, Mat &homography);
+    Mat A_homography, B_homography, A_cells, B_cells;
+    void getWallPts(Mat &mat, vector<Point2f> &pts);
+    void getFreePts(Mat &mat, vector<Point2f> &pts);
+	void plotMatches( vector<Point2f> &p_set, vector<Point2f> &res, vector<Point2f> &pair);
+	Mat generateStartingConfig(Mat &set, Mat &sub_in);
+	double linearDist(vector<Point2f> &p_sub, vector<Point2f> &p_set, vector<Point2f> &pair, vector<Point2f> &m_sub, float tol);
+	void initMap( const std_msgs::Int16MultiArray& transmission, Point shift, float angle, Mat &free, Mat &wall );
+
+
 
 	void publishNavGoalsToMoveBase();
 	void publishRvizMarker(Point loc, float radius, int color, int id);

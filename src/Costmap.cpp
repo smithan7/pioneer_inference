@@ -401,9 +401,13 @@ void Costmap::displayThermalMat(Mat &mat, Point cLoc){
 }
 
 void Costmap::showCostmapPlot(int index){ // show nice display plot and number it
-	namedWindow("Cells Mat", WINDOW_NORMAL);
-	imshow("Cells Mat", displayPlot);
-	waitKey(1);
+	
+	char buffer[50];
+	sprintf(buffer, "Cells Mat %d", index);
+
+	namedWindow(buffer, WINDOW_NORMAL);
+	imshow(buffer, displayPlot);
+	waitKey(100);
 }
 
 void Costmap::displaySearchReward(){

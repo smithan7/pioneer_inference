@@ -15,17 +15,18 @@ Agent::Agent(ros::NodeHandle nHandle){
 	costSub = nHandle.subscribe("/map", 0, &Agent::costMapCallback, this);
 	locSub = nHandle.subscribe("/odom", 1, &Agent::locationCallback, this);
 	
-	// coordination stuff
-	marketSub_A = nHandle.subscribe("/agent0/market", 1, &Agent::marketCallback, this);
-	mapUpdatesSub_A = nHandle.subscribe("/agent0/map", 1, &Agent::mapUpdatesCallback_A, this);
+	// my coordination stuff
+	this->myIndex = 0;
+	marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent0/market", 10);
+	locPub = nHandle.advertise<nav_msgs::Odometry>("/agent0/loc", 10);
+	mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent0/map", 10);
+
+	// their coordination stuff
+	marketSub_A = nHandle.subscribe("/agent1/market", 1, &Agent::marketCallback, this);
+	mapUpdatesSub_A = nHandle.subscribe("/agent1/map", 1, &Agent::mapUpdatesCallback_A, this);
 
 	marketSub_B = nHandle.subscribe("/agent2/market", 1, &Agent::marketCallback, this);
 	mapUpdatesSub_B = nHandle.subscribe("/agent2/map", 1, &Agent::mapUpdatesCallback_B, this);
-
-	// my coordination stuff
-	marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent1/market", 10);
-	locPub = nHandle.advertise<nav_msgs::Odometry>("/agent1/loc", 10);
-	mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent1/map", 10);
 
 	// rviz stuff
 	markerPub = nHandle.advertise<visualization_msgs::Marker>("/visualization_marker", 10);
@@ -43,62 +44,375 @@ Agent::Agent(ros::NodeHandle nHandle){
 	float lastPlan = -1;
 }
 
-Point Agent::transform_A( Point p ){
-	Point po;
+double Agent::linearDist(vector<Point2f> &sub_pts, vector<Point2f> &set_pts, vector<Point2f> &sub_matches, vector<Point2f> &set_matches, float tol){
+	double distSum = 0;
+	for(size_t i=0; i<sub_pts.size(); i++){
+		double minDist = INFINITY;
+		int mindex = -1;
+		for(size_t j=0; j<set_pts.size(); j++){
+			double d = pow(set_pts[j].x - sub_pts[i].x,2) + pow(set_pts[j].y - sub_pts[i].y,2);
+			if( d < minDist ){
+				minDist = d;
+				mindex = j;
+			}
+		}
+		if(minDist < tol){
+			distSum += minDist;
+			sub_matches.push_back( sub_pts[i] ); // only use pts within a set tolerance
+			set_matches.push_back( set_pts[mindex] );
+		}
+		else{
+			distSum += 2*tol;
+		}
+	}
+	return distSum;
+}
 
-	float pi = 3.14159265359;
-	float dTheta = pi/2;
-	float dx = -8;
-	float dy = 8;
-	float px = float(p.x - costmap.cells.cols/2);
-	float py = float(p.y - costmap.cells.rows/2);
-	po.x = round(dx + px*cos(dTheta) + py*sin(dTheta) + costmap.cells.cols/2);
-	po.y = round(dy - px*sin(dTheta) + py*cos(dTheta) + costmap.cells.rows/2);
+void Agent::plotMatches( vector<Point2f> &set_pts, vector<Point2f> &sub_matches, vector<Point2f> &set_matches){
+	Mat t = Mat::zeros( costmap.cells.size(), CV_8UC3);
 
-	return po;
+	Vec3b red(0,0,255);
+	Vec3b blue(0,255,0);
+	Vec3b white(255,255,255);
+
+	for(size_t i=0; i<set_pts.size(); i++){
+		t.at<Vec3b>(set_pts[i]) = white;
+	}
+
+	for(size_t i=0; i<sub_matches.size(); i++){
+		t.at<Vec3b>(sub_matches[i]) = red;
+		t.at<Vec3b>(set_matches[i]) = blue;
+	}
+
+	namedWindow("align map", WINDOW_NORMAL);
+	imshow("align map", t);
+	waitKey(1);
+}
+
+void Agent::getWallPts(Mat &mat, vector<Point2f> &pts){
+	for(int i=0; i<mat.cols; i++){
+		for(int j=0; j<mat.rows; j++){
+			Point p(i,j);
+			if(mat.at<short>(p) == costmap.obsWall){
+				pts.push_back( p );
+			}
+		}
+	}
+}
+
+void Agent::getFreePts(Mat &mat, vector<Point2f> &pts){
+	for(int i=0; i<mat.cols; i++){
+		for(int j=0; j<mat.rows; j++){
+			Point p(i,j);
+			if(mat.at<short>(p) == costmap.obsFree){
+				pts.push_back( p );
+			}
+		}
+	}
+}
+
+double Agent::alignCostmap( Mat &set, Mat &sub, Mat &homography){
+	// set is my costmap, remains fixed
+	// sub is their costmap, gets aligned
+	// homography is the kept cumulative homography matrix from origin to align, updated iteratively
+
+
+	// get wall pts
+	vector<Point2f> sub_wall_pts, sub_free_pts, set_wall_pts, set_free_pts;
+	getWallPts(set, set_wall_pts);
+	getWallPts(sub, sub_wall_pts);
+	getFreePts(set, set_free_pts);
+	getFreePts(sub, sub_free_pts);
+
+	Mat lastGood;
+	Mat transform;
+	vector<float> dists;
+	double lastDist = INFINITY;
+	Mat Homography;
+	vector<Point2f> sub_wall_raw = sub_wall_pts;
+
+	while(true) {
+
+		vector<Point2f> sub_wall_matches, set_wall_matches;
+	    double distSum = linearDist(sub_wall_pts, set_wall_pts, set_wall_matches, sub_wall_matches, 30.0);
+	    
+	    /*
+	    cout << "distSum: " << distSum << endl;
+	    cout << "set_wall_matches.size(): " << set_wall_matches.size() << endl;
+	    cout << "sub_wall_matches.size(): " << sub_wall_matches.size() << endl;
+		*/
+
+	    plotMatches( set_wall_pts, sub_wall_matches, set_wall_matches);
+
+	    if(lastDist <= distSum) {
+	       	lastGood = homography;
+	       	break;  //converged?
+	    }
+
+	    lastDist = distSum;
+
+		Mat R = estimateRigidTransform(set_wall_matches, sub_wall_matches, false);
+
+		cv::Mat H = cv::Mat(3,3,R.type());
+		H.at<double>(0,0) = R.at<double>(0,0);
+		H.at<double>(0,1) = R.at<double>(0,1);
+		H.at<double>(0,2) = R.at<double>(0,2);
+		H.at<double>(1,0) = R.at<double>(1,0);
+		H.at<double>(1,1) = R.at<double>(1,1);
+		H.at<double>(1,2) = R.at<double>(1,2);
+		H.at<double>(2,0) = 0.0;
+		H.at<double>(2,1) = 0.0;
+		H.at<double>(2,2) = 1.0;
+
+		homography = homography * H;
+
+		Mat rot_wall_temp = Mat(sub_wall_raw, CV_32FC1);
+		Mat rot_wall_matches = Mat::zeros(rot_wall_temp.size(), CV_32FC1);
+		perspectiveTransform(rot_wall_temp, rot_wall_matches, homography);
+
+		sub_wall_pts = rot_wall_matches;
+	}
+
+	homography = lastGood;
+	return lastDist;
 }
 
 void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission ){
 	
-	for(size_t i=0; i<transmission.data.size(); i+=3){
-		//x,y, val
-		Point t(transmission.data[i], transmission.data[i+1]);
-		Point p = transform_A( t );
-		if(p.x > 0 && p.y > 0 && p.x < costmap.cells.cols && p.y < costmap.cells.rows){
-			if( costmap.cells.at<short>(p) != costmap.obsFree && costmap.cells.at<short>(p) != costmap.obsWall){
-				costmap.cells.at<short>(p) = transmission.data[i+2];
+	Point shift(10,-40);
+	float angle = 175; 
+
+	//Mat matA_wall = Mat::zeros( costmap.cells.size(), CV_8UC1 );
+	Mat matA_wall = Mat::zeros( 200, 200, CV_8UC1 );
+	Mat matA_free = Mat::zeros( matA_wall.size(), CV_8UC1 );
+
+	initMap( transmission, shift, angle, matA_free, matA_wall );
+
+	/*
+	namedWindow("A free", WINDOW_NORMAL);
+	imshow("A free", matA_free);
+	waitKey(50);
+
+	namedWindow("A wall", WINDOW_NORMAL);
+	imshow("A wall", matA_wall);
+	waitKey(50);
+	*/
+	
+	Point2f src_center(matA_wall.cols/2.0F, matA_wall.rows/2.0F);
+	Mat rot_mat = getRotationMatrix2D(src_center, angle, 1.0);
+	warpAffine(matA_wall, matA_wall, rot_mat, matA_wall.size());
+	warpAffine(matA_free, matA_free, rot_mat, matA_wall.size());
+
+	/*
+	namedWindow("A free rot", WINDOW_NORMAL);
+	imshow("A free rot", matA_free);
+	waitKey(70);
+
+	namedWindow("A wall rot", WINDOW_NORMAL);
+	imshow("A wall rot", matA_wall);
+	waitKey(70);
+	*/
+
+	A_cells = Mat::ones(matA_wall.size(), CV_16SC1)*costmap.unknown;
+	vector<Point2f> A_wall_pts, A_free_pts;
+	for(int i=0; i<matA_wall.cols; i++){
+		for(int j=0; j<matA_wall.rows; j++){
+			Point a(i,j);
+			if(matA_free.at<uchar>(a) >= 127){
+				A_cells.at<short>(a) = costmap.obsFree;
+				A_free_pts.push_back(a);
+			}
+			else if(matA_wall.at<uchar>(a) >= 127){
+				A_cells.at<short>(a) = costmap.obsWall;
+				A_wall_pts.push_back(a);
 			}
 		}
 	}
+
+	if( A_homography.empty() ){
+		A_homography = Mat::eye(3, 3, CV_64FC1);
+	}
+	
+	if( !costmap.cells.empty() ){
+		double dist = alignCostmap( costmap.cells, A_cells, A_homography);
+
+		Mat rot_wall_temp = Mat(A_wall_pts, CV_32FC1);
+		Mat rot_wall_matches = Mat::zeros(rot_wall_temp.size(), CV_32FC1);
+		perspectiveTransform(rot_wall_temp, rot_wall_matches, A_homography);
+		vector<Point2f> rot_wall_vec = rot_wall_matches;
+
+		Mat rot_free_temp = Mat(A_free_pts, CV_32FC1);
+		Mat rot_free_matches = Mat::zeros(rot_wall_temp.size(), CV_32FC1);
+		perspectiveTransform(rot_free_temp, rot_free_matches, A_homography);
+		vector<Point2f> rot_free_vec = rot_free_matches;
+
+		if( dist < INFINITY ){
+			for(size_t i=0; i<rot_wall_vec.size(); i++){
+				Point p = rot_wall_vec[i];
+				if( costmap.cells.at<short>(p) != costmap.obsFree || costmap.cells.at<short>(p) != costmap.obsWall){
+					costmap.cells.at<short>(p) = costmap.obsWall;
+				}
+			}
+			for(size_t i=0; i<rot_free_vec.size(); i++){
+				Point p = rot_free_vec[i];
+
+				if( costmap.cells.at<short>(p) != costmap.obsFree || costmap.cells.at<short>(p) != costmap.obsWall){
+					costmap.cells.at<short>(p) = costmap.obsFree;
+				}
+			}
+		}
+
+		costmap.buildCellsPlot();
+		namedWindow("merged cells", WINDOW_NORMAL);
+		imshow("merged cells", costmap.displayPlot );
+		waitKey(70);
+	}
+
+	Mat dispA = Mat::zeros( matA_free.size(),CV_8UC3 );
+	for(int i=0; i<A_cells.cols; i++){
+		for(int j=0; j<A_cells.rows; j++){
+			Point a(i,j);
+			if(A_cells.at<short>(a) == costmap.obsFree){
+				dispA.at<Vec3b>(a) = costmap.cObsFree;
+			}
+			else if(A_cells.at<short>(a) == costmap.obsWall){
+				dispA.at<Vec3b>(a) = costmap.cObsWall;
+			}
+			else{ // anything else, should never happen
+				dispA.at<Vec3b>(a) = costmap.cUnknown;
+			}
+		}
+	}
+
+	namedWindow("mapUpdates A", WINDOW_NORMAL);
+	imshow("mapUpdates A", dispA);
+	waitKey(70);
 }
 
-Point Agent::transform_B( Point p ){
-	Point po;
+void Agent::initMap( const std_msgs::Int16MultiArray& transmission, Point shift, float angle, Mat &mfree, Mat &mwall ){
 
-	float pi = 3.14159265359;
-	float dTheta = pi/2;
-	float dx = 4;
-	float dy = 4;
-	float px = float(p.x - costmap.cells.cols/2);
-	float py = float(p.y - costmap.cells.rows/2);
-	po.x = round(dx + px*cos(dTheta) + py*sin(dTheta) + costmap.cells.cols/2);
-	po.y = round(dy - px*sin(dTheta) + py*cos(dTheta) + costmap.cells.rows/2);
-
-	return po;
+	for(size_t i=0; i<transmission.data.size(); i+=3){
+		//x,y, val
+		Point p(transmission.data[i]+shift.x, transmission.data[i+1]+shift.y);
+		if(p.x > 0 && p.y > 0 && p.x < mwall.cols && p.y < mwall.rows){
+			if( transmission.data[i+2] == costmap.obsFree ){
+				mfree.at<uchar>(p) = 255;
+			}
+			else if( transmission.data[i+2] == costmap.obsWall ){
+				mwall.at<uchar>(p) = 255;
+			}
+		}
+	}
 }
 
 void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission ){
-	
-	for(size_t i=0; i<transmission.data.size(); i+=3){
-		//x,y, val
-		Point t(transmission.data[i], transmission.data[i+1]);
-		Point p = transform_B( t );
-		if(p.x > 0 && p.y > 0 && p.x < costmap.cells.cols && p.y < costmap.cells.rows){
-			if( costmap.cells.at<short>(p) != costmap.obsFree && costmap.cells.at<short>(p) != costmap.obsWall){
-				costmap.cells.at<short>(p) = transmission.data[i+2];
+
+	Point shift(0, 0);
+	float angle = 0;
+
+	//Mat matB_wall = Mat::zeros( costmap.cells.size(), CV_8UC1 );
+	Mat matB_wall = Mat::zeros( 200, 200, CV_8UC1 );
+	Mat matB_free = Mat::zeros( matB_wall.size(), CV_8UC1 );
+
+	initMap( transmission, shift, angle, matB_free, matB_wall );
+	/*
+	namedWindow("B free", WINDOW_NORMAL);
+	imshow("B free", matB_free);
+	waitKey(50);
+
+	namedWindow("B wall", WINDOW_NORMAL);
+	imshow("B wall", matB_wall);
+	waitKey(50);
+	*/
+	Point2f src_center(matB_wall.cols/2.0F, matB_wall.rows/2.0F);
+	Mat rot_mat = getRotationMatrix2D(src_center, angle, 1.0);
+	warpAffine(matB_wall, matB_wall, rot_mat, matB_wall.size());
+	warpAffine(matB_free, matB_free, rot_mat, matB_wall.size());
+
+	/*
+	namedWindow("B free rot", WINDOW_NORMAL);
+	imshow("B free rot", matB_free);
+	waitKey(70);
+
+	namedWindow("B wall rot", WINDOW_NORMAL);
+	imshow("B wall rot", matB_wall);
+	waitKey(70);
+	*/
+
+	B_cells = Mat::ones( matB_free.size(), CV_16SC1)*costmap.unknown;
+	vector<Point2f> B_wall_pts, B_free_pts;
+	for(int i=0; i<matB_wall.cols; i++){
+		for(int j=0; j<matB_wall.rows; j++){
+			Point a(i,j);
+			if(matB_free.at<uchar>(a) >= 127){
+				B_cells.at<short>(a) = costmap.obsFree;
+				B_free_pts.push_back(a);
+			}
+			else if(matB_wall.at<uchar>(a) >= 127){
+				B_cells.at<short>(a) = costmap.obsWall;
+				B_wall_pts.push_back(a);
 			}
 		}
 	}
+
+	if( B_homography.empty() ){
+		B_homography = Mat::eye(3, 3, CV_64FC1);
+	}
+
+	if( !costmap.cells.empty() ){
+		double dist = alignCostmap( costmap.cells, B_cells, B_homography);
+
+		Mat rot_wall_temp = Mat(B_wall_pts, CV_32FC1);
+		Mat rot_wall_matches = Mat::zeros(rot_wall_temp.size(), CV_32FC1);
+		perspectiveTransform(rot_wall_temp, rot_wall_matches, B_homography);
+		vector<Point2f> rot_wall_vec = rot_wall_matches;
+
+		Mat rot_free_temp = Mat(B_free_pts, CV_32FC1);
+		Mat rot_free_matches = Mat::zeros(rot_wall_temp.size(), CV_32FC1);
+		perspectiveTransform(rot_free_temp, rot_free_matches, B_homography);
+		vector<Point2f> rot_free_vec = rot_free_matches;
+
+		if( dist < INFINITY ){
+			for(size_t i=0; i<rot_wall_vec.size(); i++){
+				Point p = rot_wall_vec[i];
+				if( costmap.cells.at<short>(p) != costmap.obsFree || costmap.cells.at<short>(p) != costmap.obsWall){
+					costmap.cells.at<short>(p) = costmap.obsWall;
+				}
+			}
+			for(size_t i=0; i<rot_free_vec.size(); i++){
+				Point p = rot_free_vec[i];
+
+				if( costmap.cells.at<short>(p) != costmap.obsFree || costmap.cells.at<short>(p) != costmap.obsWall){
+					costmap.cells.at<short>(p) = costmap.obsFree;
+				}
+			}
+		}
+
+		costmap.buildCellsPlot();
+		namedWindow("merged cells", WINDOW_NORMAL);
+		imshow("merged cells", costmap.displayPlot );
+		waitKey(70);
+	}
+
+	Mat dispB = Mat::zeros( matB_free.size(),CV_8UC3 );
+	for(int i=0; i<B_cells.cols; i++){
+		for(int j=0; j<B_cells.rows; j++){
+			Point a(i,j);
+			if(B_cells.at<short>(a) == costmap.obsFree){
+				dispB.at<Vec3b>(a) = costmap.cObsFree;
+			}
+			else if(B_cells.at<short>(a) == costmap.obsWall){
+				dispB.at<Vec3b>(a) = costmap.cObsWall;
+			}
+			else{ // anything else, should never happen
+				dispB.at<Vec3b>(a) = costmap.cUnknown;
+			}
+		}
+	}
+
+	namedWindow("mapUpdates B", WINDOW_NORMAL);
+	imshow("mapUpdates B", dispB);
+	waitKey(70);
 }
 
 void Agent::publishNavGoalsToMoveBase(){
@@ -416,7 +730,7 @@ void Agent::init(int myIndex, float obsThresh, float comThresh, int numAgents){
 	gLoc = Point(-1,-1);
 	gLocPrior = Point(-1,-1);
 
-	this->myIndex = myIndex;
+	//this->myIndex = myIndex;
 	this->pickMyColor();
 
 	for(int i=0; i<numAgents; i++){
