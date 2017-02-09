@@ -430,7 +430,6 @@ void Graph::createThinGraph(Costmap &costmap, int nodeSpacing, int nbrSpacing){
 	imshow("Graph::createThinGraph::thinMat", thinMat);
 	waitKey(0);
 	*/
-
 	// add nodes
 	nodeLocations.clear();
 	findStatesCityBlockDistance(thinMat); // add them to graf;

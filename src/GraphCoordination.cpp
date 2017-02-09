@@ -407,12 +407,14 @@ void GraphCoordination::findPosesEvolution(Costmap &costmap){
 		iter++;
 	}
 
-	//plotPoses( costmap, cPoses, oPoses, poseViews , poseLocations);
-	//waitKey(1);
+	plotPoses( costmap, cPoses, oPoses, poseViews , poseLocations);
+	waitKey(1);
+	Mat test = Mat::zeros(costmap.cells.size(), CV_8UC1);
 
 	poseGraph.nodeLocations.clear();
 	poseGraph.nodeObservations.clear();
 	for(size_t i=0; i<cPoses.size(); i++){
+		test.at<uchar>(poseLocations[ cPoses[i] ]) = 255;
 		poseGraph.nodeLocations.push_back( poseLocations[ cPoses[i] ] );
 		poseGraph.nodeObservations.push_back( poseViews[ cPoses[i] ] );
 	}
@@ -437,6 +439,7 @@ void GraphCoordination::getOset(vector<int> &oStates, vector<int> &cStates, vect
 
 float GraphCoordination::observedReward(Mat &observed, Mat &reward){
 	// get Mat entropy
+
 	float r = 0;
 	for(int i=0; i<observed.cols; i++){
 		for(int j=0; j<observed.rows; j++){

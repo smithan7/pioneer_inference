@@ -42,6 +42,17 @@ Agent::Agent(ros::NodeHandle nHandle){
 
 	oLoc = Point(50,60);
 	float lastPlan = -1;
+
+	graphCoordination.init(20, 20);
+
+	planningMethod = "selectPose";
+	//planningMethod = "greedyFrontiers";
+	//planningMethod = "marketFrontiers";
+
+
+	//inferenceMethod = "naive";
+	inferenceMethod = "geometric";
+	//inferenceMethod = "visual";
 }
 
 double Agent::linearDist(vector<Point2f> &sub_pts, vector<Point2f> &set_pts, vector<Point2f> &sub_matches, vector<Point2f> &set_matches, float tol){
@@ -66,6 +77,29 @@ double Agent::linearDist(vector<Point2f> &sub_pts, vector<Point2f> &set_pts, vec
 		}
 	}
 	return distSum;
+	/*
+	double distSum = 0;
+	for(int i=0; i<4; i++){
+		while(true){
+			double minDist = INFINITY;
+			int mindex = -1;
+			int rind = rand() % sub_pts.size();
+			for(size_t j=0; j<set_pts.size(); j++){
+				double d = pow(set_pts[j].x - sub_pts[rind].x,2) + pow(set_pts[j].y - sub_pts[rind].y,2);
+				if( d < minDist ){
+					minDist = d;
+					mindex = j;
+				}
+			}
+			if(minDist < tol){
+				distSum += minDist;
+				sub_matches.push_back( sub_pts[rind] ); // only use pts within a set tolerance
+				set_matches.push_back( set_pts[mindex] );
+				break;
+			}
+		}
+	}*/
+	return distSum;
 }
 
 void Agent::plotMatches( vector<Point2f> &set_pts, vector<Point2f> &sub_matches, vector<Point2f> &set_matches){
@@ -86,7 +120,7 @@ void Agent::plotMatches( vector<Point2f> &set_pts, vector<Point2f> &sub_matches,
 
 	namedWindow("align map", WINDOW_NORMAL);
 	imshow("align map", t);
-	waitKey(1);
+	waitKey(500);
 }
 
 void Agent::getWallPts(Mat &mat, vector<Point2f> &pts){
@@ -130,11 +164,12 @@ double Agent::alignCostmap( Mat &set, Mat &sub, Mat &homography){
 	double lastDist = INFINITY;
 	Mat Homography;
 	vector<Point2f> sub_wall_raw = sub_wall_pts;
-
+	int test = 0;
+	float dist_tol = 10.0;
 	while(true) {
-
+		test++;
 		vector<Point2f> sub_wall_matches, set_wall_matches;
-	    double distSum = linearDist(sub_wall_pts, set_wall_pts, set_wall_matches, sub_wall_matches, 30.0);
+	    double distSum = linearDist(sub_wall_pts, set_wall_pts, set_wall_matches, sub_wall_matches, dist_tol);
 	    
 	    /*
 	    cout << "distSum: " << distSum << endl;
@@ -144,14 +179,18 @@ double Agent::alignCostmap( Mat &set, Mat &sub, Mat &homography){
 
 	    plotMatches( set_wall_pts, sub_wall_matches, set_wall_matches);
 
-	    if(lastDist <= distSum) {
+	    if(lastDist <= distSum && test > 10) {
 	       	lastGood = homography;
 	       	break;  //converged?
 	    }
 
 	    lastDist = distSum;
+	    //cerr << "distSum: " << distSum << endl;
+	    //cerr << "matches: " << sub_wall_matches.size() << ", " << set_wall_matches.size() << endl;
 
 		Mat R = estimateRigidTransform(set_wall_matches, sub_wall_matches, false);
+		//Mat R = findHomography( sub_wall_matches, set_wall_matches, CV_RANSAC);
+		//cerr << "R: " << R << endl;
 
 		cv::Mat H = cv::Mat(3,3,R.type());
 		H.at<double>(0,0) = R.at<double>(0,0);
@@ -288,6 +327,7 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 	// agent2 -> agent1
 	Point shift(12, 32);
 	float angle = -15;
+	//float angle = -5;
 
 	//Mat matB_wall = Mat::zeros( costmap.cells.size(), CV_8UC1 );
 	Mat matB_wall = Mat::zeros( 192, 192, CV_8UC1 );
@@ -487,11 +527,13 @@ void Agent::locationCallback( const nav_msgs::Odometry& locIn){
 	market.updatecLoc( cLoc );
 
 	if( costmapInitialized && !locationInitialized){
-		plan("marketFrontiers");
+		//plan("marketFrontiers");
+		 plan( planningMethod );
 	}
 
 	if( costmapInitialized && locationInitialized && marketInitialized && ros::Time::now().toSec() - lastPlan > 5){
-		plan("marketFrontiers");
+		//plan("marketFrontiers");
+		plan( planningMethod );
 	}
 
 	locationInitialized = true;
@@ -537,11 +579,11 @@ void Agent::costMapCallback(const nav_msgs::OccupancyGrid& cost_in ){
 	costmap.updateCells( occGrid );
 	publishMapUpdates();
 
-	inference.makeInference( "Geometric", costmap );
+	inference.makeInference( inferenceMethod, costmap );
 
 
 	if( locationInitialized ){
-		plan("marketFrontiers");
+		plan( planningMethod );
 	}
 
 	costmap.buildCellsPlot();
@@ -583,43 +625,6 @@ void Agent::publishMapUpdates(){
 void Agent::plan( string planMethod ){
 	lastPlan = ros::Time::now().toSec();
 
-	/*
-	//marketRelaySacrifice();
-	//marketReturnInfo();
-
-	// all agents check if they should return, includes relay / sacrifice / normal
-
-
-	cout << "checkReturnTime: " << checkReturnTime() << endl;
-	cout << "checkForExplorationFinished: " << checkForExplorationFinished() << endl;
-
-	if( checkReturnTime() || checkForExplorationFinished() || explorationComplete){
-		if(relayFlag || sacrificeFlag){
-			if(relayFlag){
-				cout << "returning to relay point as relay" << endl;
-				gLoc = returnToRelayPt();
-				return;
-			}
-			else{
-				gLoc = reportToRelayPt();
-				cout << "reporting to relay point as sacrifice" << endl;
-				return;
-			}
-		}
-		else{
-			gLoc = returnToOperator();
-			cout << "returning to operator" << endl;
-			return;
-		}
-	}
-
-	// all agents check if they should report
-	if( checkReportTime() && !lastReport()){
-		//cout << "reporting to operator " << endl;
-		//gLoc = reportToOperator();
-		//return;
-	}
-	*/
 	if( checkForExplorationFinished() ){
 		gLoc = cLoc;
 		return;
@@ -660,10 +665,10 @@ void Agent::planExplore(string planMethod ){
 	else if(planMethod.compare("selectPose") == 0){
 
 		float w[3] = {1, 0, 0}; // explore, search, map
-		float e[2] = {0.5, 1}; // dominated, breaches
+		float e[2] = {0, 1}; // dominated, breaches
 		float spread = 0.3; // spread rate
 		costmap.getRewardMat(w, e, spread);
-		//costmap.displayThermalMat( costmap.reward );
+		costmap.displayThermalMat( costmap.reward, cLoc );
 
 		//gLoc = costmapPlanning.explorePlanner(costmap, cLoc);
 		//gLoc = costmapPlanning.searchPlanner(costmap, cLoc);
@@ -679,7 +684,7 @@ void Agent::planExplore(string planMethod ){
 		//cout << "Agent::planExplore::found graphPoses with " << this->graphCoordination.poseGraph.nodeLocations.size() << " nodes" << endl;
 
 		if(graphCoordination.poseGraph.nodeLocations.size() < 1){
-			//cout << "PoseGraph.size() == 0" << endl;
+			ROS_WARN("PoseGraph.size() == 0");
 			gLoc = costmapPlanning.explorePlanner(costmap, cLoc);
 			//gLoc = costmapPlanning.greedyFrontierPlanner(costmap, cLoc);
 		}
@@ -687,8 +692,6 @@ void Agent::planExplore(string planMethod ){
 			//gLoc = costmapPlanning.explorePlanner(costmap, cLoc);
 			graphCoordination.marketPoses( costmap, cLoc, gLoc, market );
 		}
-
-
 
 		//graphCoordination.displayPoseGraph( costmap );
 
@@ -774,7 +777,7 @@ void Agent::act(){
 			cout << "waiting on location callback" << endl;
 		}
 
-		if( flag && false){
+		if( flag || true){
 			if(cLoc == gLoc){
 				while(true){
 					Point g;

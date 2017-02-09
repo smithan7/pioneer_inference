@@ -85,7 +85,7 @@ public:
 	void publishLoc(const nav_msgs::Odometry& locIn);
 
 
-
+	string planningMethod, inferenceMethod;
 	int iterCntr, iterPeriod;
 
 	// agent stuff

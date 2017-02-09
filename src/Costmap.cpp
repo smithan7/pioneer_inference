@@ -386,13 +386,8 @@ void Costmap::displayThermalMat(Mat &mat, Point cLoc){
 		cv::circle( tMat, cLoc, 2, c, -1, 8);
 	}
 
-	Point2f src_center(tMat.cols/2.0F, tMat.rows/2.0F);
-	Mat rot_mat = getRotationMatrix2D(src_center, 270, 1.0);
-	Mat dst;
-	warpAffine(tMat, dst, rot_mat, tMat.size());
-
 	namedWindow("Thermal Mat", WINDOW_NORMAL);
-	imshow("Thermal Mat", dst);
+	imshow("Thermal Mat", tMat);
 	waitKey(1);
 }
 
