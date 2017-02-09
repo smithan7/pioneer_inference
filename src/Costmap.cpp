@@ -176,17 +176,13 @@ vector<int8_t> Costmap::updateCells( vector<int8_t> &occupancy_grid_array ){
 
 	for(size_t i=0; i<occupancy_grid_array.size(); i++){
 		 Point p = getCellIndex( i );
-
 		 //ROS_INFO("p.x/y: %d/%d: %d", p.x, p.y,occupancy_grid_array[i]);
-		 
-
-
 		 if(occupancy_grid_array[i] == ros_unknown){
 		 	if( cells.at<short>(p) != unknown){
-		 		cells.at<short>(p) = unknown;
-		 		cmud.push_back(p.x);
-		 		cmud.push_back(p.y);
-		 		cmud.push_back(unknown);
+		 		//cells.at<short>(p) = unknown;
+		 		//cmud.push_back(p.x);
+		 		//cmud.push_back(p.y);
+		 		//cmud.push_back(unknown);
 		 	}
 		 }
 		 else if(occupancy_grid_array[i] < ros_wall / 4){//ros_free){

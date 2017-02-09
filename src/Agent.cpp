@@ -179,14 +179,13 @@ double Agent::alignCostmap( Mat &set, Mat &sub, Mat &homography){
 
 void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission ){
 	
-	Point shift(10,-40);
-	float angle = 175; 
+	// agent2 -> agent0
+	Point shift(-10,-25);
+	float angle = 180; 
 
 	//Mat matA_wall = Mat::zeros( costmap.cells.size(), CV_8UC1 );
-	Mat matA_wall = Mat::zeros( 200, 200, CV_8UC1 );
+	Mat matA_wall = Mat::zeros( 192, 192, CV_8UC1 );
 	Mat matA_free = Mat::zeros( matA_wall.size(), CV_8UC1 );
-
-	initMap( transmission, shift, angle, matA_free, matA_wall );
 
 	/*
 	namedWindow("A free", WINDOW_NORMAL);
@@ -197,12 +196,7 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 	imshow("A wall", matA_wall);
 	waitKey(50);
 	*/
-	
-	Point2f src_center(matA_wall.cols/2.0F, matA_wall.rows/2.0F);
-	Mat rot_mat = getRotationMatrix2D(src_center, angle, 1.0);
-	warpAffine(matA_wall, matA_wall, rot_mat, matA_wall.size());
-	warpAffine(matA_free, matA_free, rot_mat, matA_wall.size());
-
+	initMap( transmission, shift, angle, matA_free, matA_wall );
 	/*
 	namedWindow("A free rot", WINDOW_NORMAL);
 	imshow("A free rot", matA_free);
@@ -228,12 +222,12 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 			}
 		}
 	}
-
-	if( A_homography.empty() ){
-		A_homography = Mat::eye(3, 3, CV_64FC1);
-	}
 	
 	if( !costmap.cells.empty() ){
+
+		if( A_homography.empty() ){
+			A_homography = Mat::eye(3, 3, CV_64FC1);
+		}
 		double dist = alignCostmap( costmap.cells, A_cells, A_homography);
 
 		Mat rot_wall_temp = Mat(A_wall_pts, CV_32FC1);
@@ -289,32 +283,16 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 	waitKey(70);
 }
 
-void Agent::initMap( const std_msgs::Int16MultiArray& transmission, Point shift, float angle, Mat &mfree, Mat &mwall ){
-
-	for(size_t i=0; i<transmission.data.size(); i+=3){
-		//x,y, val
-		Point p(transmission.data[i]+shift.x, transmission.data[i+1]+shift.y);
-		if(p.x > 0 && p.y > 0 && p.x < mwall.cols && p.y < mwall.rows){
-			if( transmission.data[i+2] == costmap.obsFree ){
-				mfree.at<uchar>(p) = 255;
-			}
-			else if( transmission.data[i+2] == costmap.obsWall ){
-				mwall.at<uchar>(p) = 255;
-			}
-		}
-	}
-}
-
 void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission ){
 
-	Point shift(0, 0);
-	float angle = 0;
+	// agent2 -> agent1
+	Point shift(12, 32);
+	float angle = -15;
 
 	//Mat matB_wall = Mat::zeros( costmap.cells.size(), CV_8UC1 );
-	Mat matB_wall = Mat::zeros( 200, 200, CV_8UC1 );
+	Mat matB_wall = Mat::zeros( 192, 192, CV_8UC1 );
 	Mat matB_free = Mat::zeros( matB_wall.size(), CV_8UC1 );
 
-	initMap( transmission, shift, angle, matB_free, matB_wall );
 	/*
 	namedWindow("B free", WINDOW_NORMAL);
 	imshow("B free", matB_free);
@@ -324,10 +302,8 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 	imshow("B wall", matB_wall);
 	waitKey(50);
 	*/
-	Point2f src_center(matB_wall.cols/2.0F, matB_wall.rows/2.0F);
-	Mat rot_mat = getRotationMatrix2D(src_center, angle, 1.0);
-	warpAffine(matB_wall, matB_wall, rot_mat, matB_wall.size());
-	warpAffine(matB_free, matB_free, rot_mat, matB_wall.size());
+
+	initMap( transmission, shift, angle, matB_free, matB_wall );
 
 	/*
 	namedWindow("B free rot", WINDOW_NORMAL);
@@ -355,11 +331,10 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 		}
 	}
 
-	if( B_homography.empty() ){
-		B_homography = Mat::eye(3, 3, CV_64FC1);
-	}
-
 	if( !costmap.cells.empty() ){
+		if( B_homography.empty() ){
+			B_homography = Mat::eye(3, 3, CV_64FC1);
+		}
 		double dist = alignCostmap( costmap.cells, B_cells, B_homography);
 
 		Mat rot_wall_temp = Mat(B_wall_pts, CV_32FC1);
@@ -413,6 +388,27 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 	namedWindow("mapUpdates B", WINDOW_NORMAL);
 	imshow("mapUpdates B", dispB);
 	waitKey(70);
+}
+
+void Agent::initMap( const std_msgs::Int16MultiArray& transmission, Point shift, float angle, Mat &mfree, Mat &mwall ){
+
+	for(size_t i=0; i<transmission.data.size(); i+=3){
+		//x,y, val
+		Point p(transmission.data[i]+shift.x, transmission.data[i+1]+shift.y);
+		if(p.x > 0 && p.y > 0 && p.x < mwall.cols && p.y < mwall.rows){
+			if( transmission.data[i+2] == costmap.obsFree ){
+				mfree.at<uchar>(p) = 255;
+			}
+			else if( transmission.data[i+2] == costmap.obsWall ){
+				mwall.at<uchar>(p) = 255;
+			}
+		}
+	}
+
+	Point2f src_center(mwall.cols/2.0F, mwall.rows/2.0F);
+	Mat rot_mat = getRotationMatrix2D(src_center, angle, 1.0);
+	warpAffine(mwall, mwall, rot_mat, mwall.size());
+	warpAffine(mfree, mfree, rot_mat, mfree.size());
 }
 
 void Agent::publishNavGoalsToMoveBase(){
