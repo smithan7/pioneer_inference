@@ -75,7 +75,7 @@ public:
 	Mat generateStartingConfig(Mat &set, Mat &sub_in);
 	double linearDist(vector<Point2f> &p_sub, vector<Point2f> &p_set, vector<Point2f> &pair, vector<Point2f> &m_sub, float tol);
 	void initMap( const std_msgs::Int16MultiArray& transmission, Point shift, float angle, Mat &free, Mat &wall );
-
+	float fit3DofQUADRATIC(const vector<Point2f>& src_, const vector<Point2f>& dst_, float* param);
 
 
 	void publishNavGoalsToMoveBase();

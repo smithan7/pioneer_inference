@@ -120,7 +120,7 @@ void Agent::plotMatches( vector<Point2f> &set_pts, vector<Point2f> &sub_matches,
 
 	namedWindow("align map", WINDOW_NORMAL);
 	imshow("align map", t);
-	waitKey(500);
+	waitKey(50);
 }
 
 void Agent::getWallPts(Mat &mat, vector<Point2f> &pts){
@@ -165,7 +165,7 @@ double Agent::alignCostmap( Mat &set, Mat &sub, Mat &homography){
 	Mat Homography;
 	vector<Point2f> sub_wall_raw = sub_wall_pts;
 	int test = 0;
-	float dist_tol = 10.0;
+	float dist_tol = 100.0;
 	while(true) {
 		test++;
 		vector<Point2f> sub_wall_matches, set_wall_matches;
@@ -179,7 +179,7 @@ double Agent::alignCostmap( Mat &set, Mat &sub, Mat &homography){
 
 	    plotMatches( set_wall_pts, sub_wall_matches, set_wall_matches);
 
-	    if(lastDist <= distSum && test > 10) {
+	    if(lastDist <= distSum && test > 50) {
 	       	lastGood = homography;
 	       	break;  //converged?
 	    }
@@ -188,10 +188,10 @@ double Agent::alignCostmap( Mat &set, Mat &sub, Mat &homography){
 	    //cerr << "distSum: " << distSum << endl;
 	    //cerr << "matches: " << sub_wall_matches.size() << ", " << set_wall_matches.size() << endl;
 
+/*
 		Mat R = estimateRigidTransform(set_wall_matches, sub_wall_matches, false);
 		//Mat R = findHomography( sub_wall_matches, set_wall_matches, CV_RANSAC);
 		//cerr << "R: " << R << endl;
-
 		cv::Mat H = cv::Mat(3,3,R.type());
 		H.at<double>(0,0) = R.at<double>(0,0);
 		H.at<double>(0,1) = R.at<double>(0,1);
@@ -199,6 +199,19 @@ double Agent::alignCostmap( Mat &set, Mat &sub, Mat &homography){
 		H.at<double>(1,0) = R.at<double>(1,0);
 		H.at<double>(1,1) = R.at<double>(1,1);
 		H.at<double>(1,2) = R.at<double>(1,2);
+		H.at<double>(2,0) = 0.0;
+		H.at<double>(2,1) = 0.0;
+		H.at<double>(2,2) = 1.0;
+*/
+		float param[3] = {0,0,0};
+		float R = fit3DofQUADRATIC(set_wall_matches, sub_wall_matches, param);
+		cv::Mat H = cv::Mat(3,3,CV_64FC1);
+		H.at<double>(0,0) = cos(param[0]);
+		H.at<double>(0,1) = -sin(param[0]);
+		H.at<double>(0,2) = param[1];
+		H.at<double>(1,0) = sin(param[0]);
+		H.at<double>(1,1) = cos(param[0]);
+		H.at<double>(1,2) = param[2];
 		H.at<double>(2,0) = 0.0;
 		H.at<double>(2,1) = 0.0;
 		H.at<double>(2,2) = 1.0;
@@ -215,6 +228,100 @@ double Agent::alignCostmap( Mat &set, Mat &sub, Mat &homography){
 	homography = lastGood;
 	return lastDist;
 }
+
+// fits 3DOF (rotation and translation in 2D) with least squares.
+float Agent::fit3DofQUADRATIC(const vector<Point2f>& src_, const vector<Point2f>& dst_, float* param){
+// http://stackoverflow.com/questions/35765546/convert-from-mat-to-point2f-or-point3f
+    const bool debug = false;                   // print more debug info
+    assert(dst_.size() == src_.size());
+    int N = src_.size();
+
+    // collect inliers
+    vector<Point2f> src, dst;
+    int ninliers;
+	ninliers = N;
+	src = src_; // copy constructor
+	dst = dst_;
+
+    if (ninliers<2) {
+        param[0] = 0.0f; // default return when there is not enough points
+        param[1] = 0.0f;
+        param[2] = 0.0f;
+        return 1000000;
+    }
+
+    /* Algorithm: Least-Square Rigid Motion Using SVD by Olga Sorkine
+     * http://igl.ethz.ch/projects/ARAP/svd_rot.pdf
+     *
+     * Subtract centroids, calculate SVD(cov),
+     * R = V[1, det(VU')]'U', T = mean_q-R*mean_p
+     */
+
+    // Calculate data centroids
+    Scalar centroid_src = mean(src);
+    Scalar centroid_dst = mean(dst);
+    Point2f center_src(centroid_src[0], centroid_src[1]);
+    Point2f center_dst(centroid_dst[0], centroid_dst[1]);
+    if (debug)
+        cerr<<"Centers: "<<center_src<<", "<<center_dst<<endl;
+
+    // subtract centroids from data
+    for (int i=0; i<ninliers; i++) {
+        src[i] -= center_src;
+        dst[i] -= center_dst;
+    }
+
+    // compute a covariance matrix
+    float Cxx = 0.0, Cxy = 0.0, Cyx = 0.0, Cyy = 0.0;
+    for (int i=0; i<ninliers; i++) {
+        Cxx += src[i].x*dst[i].x;
+        Cxy += src[i].x*dst[i].y;
+        Cyx += src[i].y*dst[i].x;
+        Cyy += src[i].y*dst[i].y;
+    }
+    Mat Mcov = (Mat_<float>(2, 2)<<Cxx, Cxy, Cyx, Cyy);
+    Mcov /= (ninliers-1);
+    if (debug)
+        cerr<<"Covariance-like Matrix "<<Mcov<<endl;
+
+    // SVD of covariance
+    cv::SVD svd;
+    svd = SVD(Mcov, SVD::FULL_UV);
+    if (debug) {
+        cerr<<"U = "<<svd.u<<endl;
+        cerr<<"W = "<<svd.w<<endl;
+        cerr<<"V transposed = "<<svd.vt<<endl;
+    }
+
+    // rotation (V*Ut)
+    Mat V = svd.vt.t();
+    Mat Ut = svd.u.t();
+    float det_VUt = determinant(V*Ut);
+    Mat W = (Mat_<float>(2, 2)<<1.0, 0.0, 0.0, det_VUt);
+    float rot[4];
+    Mat R_est(2, 2, CV_32F, rot);
+    R_est = V*W*Ut;
+    if (debug)
+        cerr<<"Rotation matrix: "<<R_est<<endl;
+
+    float cos_est = rot[0];
+    float sin_est = rot[2];
+    float ang = atan2(sin_est, cos_est);
+
+    // translation (mean_dst - R*mean_src)
+    Point2f center_srcRot = Point2f(
+            cos_est*center_src.x - sin_est*center_src.y,
+            sin_est*center_src.x + cos_est*center_src.y);
+    Point2f T_est = center_dst - center_srcRot;
+
+    // Final estimate msg
+    if (debug)
+        cerr<<"Estimate = "<< ang*360/6.26 <<"deg., T = "<<T_est<<endl;
+
+    param[0] = ang; // rad
+    param[1] = T_est.x;
+    param[2] = T_est.y;
+} // fit3DofQUADRATIC()
 
 void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission ){
 	
@@ -326,8 +433,9 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 
 	// agent2 -> agent1
 	Point shift(12, 32);
-	float angle = -15;
-	//float angle = -5;
+	//float angle = -15;
+	
+	float angle = -5;
 
 	//Mat matB_wall = Mat::zeros( costmap.cells.size(), CV_8UC1 );
 	Mat matB_wall = Mat::zeros( 192, 192, CV_8UC1 );
