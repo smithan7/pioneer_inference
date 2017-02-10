@@ -17,16 +17,16 @@ Agent::Agent(ros::NodeHandle nHandle){
 	
 	// my coordination stuff
 	this->myIndex = 0;
-	marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent0/market", 10);
-	locPub = nHandle.advertise<nav_msgs::Odometry>("/agent0/loc", 10);
-	mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent0/map", 10);
+	marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent2/market", 10);
+	locPub = nHandle.advertise<nav_msgs::Odometry>("/agent2/loc", 10);
+	mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent2/map", 10);
 
 	// their coordination stuff
-	marketSub_A = nHandle.subscribe("/agent1/market", 1, &Agent::marketCallback, this);
-	mapUpdatesSub_A = nHandle.subscribe("/agent1/map", 1, &Agent::mapUpdatesCallback_A, this);
+	marketSub_A = nHandle.subscribe("/agent0/market", 1, &Agent::marketCallback, this);
+	mapUpdatesSub_A = nHandle.subscribe("/agent0/map", 1, &Agent::mapUpdatesCallback_A, this);
 
-	marketSub_B = nHandle.subscribe("/agent2/market", 1, &Agent::marketCallback, this);
-	mapUpdatesSub_B = nHandle.subscribe("/agent2/map", 1, &Agent::mapUpdatesCallback_B, this);
+	marketSub_B = nHandle.subscribe("/agent1/market", 1, &Agent::marketCallback, this);
+	mapUpdatesSub_B = nHandle.subscribe("/agent1/map", 1, &Agent::mapUpdatesCallback_B, this);
 
 	// rviz stuff
 	markerPub = nHandle.advertise<visualization_msgs::Marker>("/visualization_marker", 10);
@@ -221,50 +221,24 @@ double Agent::alignCostmap( Mat &set, Mat &sub, Mat &homography){
 	Mat lastGood;
 	Mat transform;
 	vector<float> dists;
-	double lastDist = INFINITY;
-	Mat Homography;
 	vector<Point2f> sub_wall_raw = sub_wall_pts;
-	int test = 0;
-	float dist_tol = 100.0;
+	float dist_tol = 20.0;
+
+	Mat rot_wall_temp = Mat(sub_wall_raw, CV_32FC1);
+	Mat rot_wall_matches = Mat::zeros(rot_wall_temp.size(), CV_32FC1);
+	perspectiveTransform(rot_wall_temp, rot_wall_matches, homography);
+	sub_wall_pts = rot_wall_matches;
+
 	while(true) {
-		test++;
 		vector<Point2f> sub_wall_matches, set_wall_matches;
 	    double distSum = linearDist(sub_wall_pts, set_wall_pts, set_wall_matches, sub_wall_matches, dist_tol);
 	    
-	    /*
-	    cout << "distSum: " << distSum << endl;
-	    cout << "set_wall_matches.size(): " << set_wall_matches.size() << endl;
-	    cout << "sub_wall_matches.size(): " << sub_wall_matches.size() << endl;
-		*/
-
 	    plotMatches( set_wall_pts, sub_wall_matches, set_wall_matches);
+	    waitKey(70);
 
-	    if(lastDist <= distSum && test > 50) {
-	       	lastGood = homography;
-	       	break;  //converged?
-	    }
-
-	    lastDist = distSum;
-	    //cerr << "distSum: " << distSum << endl;
-	    //cerr << "matches: " << sub_wall_matches.size() << ", " << set_wall_matches.size() << endl;
-
-/*
-		Mat R = estimateRigidTransform(set_wall_matches, sub_wall_matches, false);
-		//Mat R = findHomography( sub_wall_matches, set_wall_matches, CV_RANSAC);
-		//cerr << "R: " << R << endl;
-		cv::Mat H = cv::Mat(3,3,R.type());
-		H.at<double>(0,0) = R.at<double>(0,0);
-		H.at<double>(0,1) = R.at<double>(0,1);
-		H.at<double>(0,2) = R.at<double>(0,2);
-		H.at<double>(1,0) = R.at<double>(1,0);
-		H.at<double>(1,1) = R.at<double>(1,1);
-		H.at<double>(1,2) = R.at<double>(1,2);
-		H.at<double>(2,0) = 0.0;
-		H.at<double>(2,1) = 0.0;
-		H.at<double>(2,2) = 1.0;
-*/
 		float param[3] = {0,0,0};
 		float R = fit3DofQUADRATIC(set_wall_matches, sub_wall_matches, param);
+
 		cv::Mat H = cv::Mat(3,3,CV_64FC1);
 		H.at<double>(0,0) = cos(param[0]);
 		H.at<double>(0,1) = -sin(param[0]);
@@ -283,10 +257,14 @@ double Agent::alignCostmap( Mat &set, Mat &sub, Mat &homography){
 		perspectiveTransform(rot_wall_temp, rot_wall_matches, homography);
 
 		sub_wall_pts = rot_wall_matches;
+
+		cout << "Param: " << param[0] << " , " << param[1] << " , " << param[2] << endl;
+		if(abs(param[0]) + abs(param[1]) + abs(param[2]) < 0.01){
+			break;
+		}
 	}
 
-	homography = lastGood;
-	return lastDist;
+	return 0;
 }
 
 // fits 3DOF (rotation and translation in 2D) with least squares.
@@ -385,6 +363,14 @@ float Agent::fit3DofQUADRATIC(const vector<Point2f>& src_, const vector<Point2f>
 
 void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission ){
 	
+	// agent 0 -> agent1
+	//Point shift(10,0);
+	//float angle = 185;
+
+	// agent 1 -> agent0
+	//Point shift(-10,0);
+	//float angle = 205;
+
 	// agent2 -> agent0
 	Point shift(-10,-25);
 	float angle = 180; 
@@ -392,18 +378,9 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 	//Mat matA_wall = Mat::zeros( costmap.cells.size(), CV_8UC1 );
 	Mat matA_wall = Mat::zeros( 192, 192, CV_8UC1 );
 	Mat matA_free = Mat::zeros( matA_wall.size(), CV_8UC1 );
-
-	/*
-	namedWindow("A free", WINDOW_NORMAL);
-	imshow("A free", matA_free);
-	waitKey(50);
-
-	namedWindow("A wall", WINDOW_NORMAL);
-	imshow("A wall", matA_wall);
-	waitKey(50);
-	*/
+	
 	initMap( transmission, shift, angle, matA_free, matA_wall );
-	/*
+	
 	namedWindow("A free rot", WINDOW_NORMAL);
 	imshow("A free rot", matA_free);
 	waitKey(70);
@@ -411,8 +388,7 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 	namedWindow("A wall rot", WINDOW_NORMAL);
 	imshow("A wall rot", matA_wall);
 	waitKey(70);
-	*/
-
+	
 	A_cells = Mat::ones(matA_wall.size(), CV_16SC1)*costmap.unknown;
 	vector<Point2f> A_wall_pts, A_free_pts;
 	for(int i=0; i<matA_wall.cols; i++){
@@ -433,7 +409,46 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 
 		if( A_homography.empty() ){
 			A_homography = Mat::eye(3, 3, CV_64FC1);
+			
+			/*
+			// agent0 -> agent1
+			A_homography.at<double>(0,0) = 0.9021490578708488;
+			A_homography.at<double>(0,1) = -0.4314247333114125;
+			A_homography.at<double>(0,2) = 74.07028346057548;
+			A_homography.at<double>(1,0) = 0.4314247333114125;
+			A_homography.at<double>(1,1) = 0.9021490578708488;
+			A_homography.at<double>(1,2) = -32.11890638977299;
+			A_homography.at<double>(2,0) = 0;
+			A_homography.at<double>(2,1) = 0;
+			A_homography.at<double>(2,2) = 1;
+			*/
+
+			/*
+			// agent1 -> agent0
+			A_homography.at<double>(0,0) = 0.9959783994237053;
+			A_homography.at<double>(0,1) = -0.08959927912193513;
+			A_homography.at<double>(0,2) = 11.58855251649272;
+			A_homography.at<double>(1,0) = 0.08959927912193513;
+			A_homography.at<double>(1,1) = 0.9959783994237053;
+			A_homography.at<double>(1,2) = -13.16001256806977;
+			A_homography.at<double>(2,0) = 0;
+			A_homography.at<double>(2,1) = 0;
+			A_homography.at<double>(2,2) = 1;
+			*/
+
+			// agent2 -> agent0
+			A_homography.at<double>(0,0) = 0.9904669908203648;
+			A_homography.at<double>(0,1) = 0.1377500043953933;
+			A_homography.at<double>(0,2) = -14.8143625208088;
+			A_homography.at<double>(1,0) = -0.1377500043953933;
+			A_homography.at<double>(1,1) = 0.9904669908203648;
+			A_homography.at<double>(1,2) = 17.87725265552533;
+			A_homography.at<double>(2,0) = 0;
+			A_homography.at<double>(2,1) = 0;
+			A_homography.at<double>(2,2) = 1;
+
 		}
+
 		double dist = alignCostmap( costmap.cells, A_cells, A_homography);
 
 		Mat rot_wall_temp = Mat(A_wall_pts, CV_32FC1);
@@ -461,6 +476,8 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 				}
 			}
 		}
+
+		cout << "A_homography: " << A_homography << endl;
 
 		costmap.buildCellsPlot();
 		namedWindow("merged cells", WINDOW_NORMAL);
@@ -491,11 +508,17 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 
 void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission ){
 
+	// agent0 -> agent2
+	//Point shift(-10,-35);
+	//float angle = 170;
+
+	//agent 1 -> agent2
+	//Point shift(-2,-32);
+	//float angle = 15;
+
 	// agent2 -> agent1
 	Point shift(12, 32);
-	//float angle = -15;
-	
-	float angle = -5;
+	float angle = -15;
 
 	//Mat matB_wall = Mat::zeros( costmap.cells.size(), CV_8UC1 );
 	Mat matB_wall = Mat::zeros( 192, 192, CV_8UC1 );
@@ -512,8 +535,7 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 	*/
 
 	initMap( transmission, shift, angle, matB_free, matB_wall );
-
-	/*
+	
 	namedWindow("B free rot", WINDOW_NORMAL);
 	imshow("B free rot", matB_free);
 	waitKey(70);
@@ -521,8 +543,7 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 	namedWindow("B wall rot", WINDOW_NORMAL);
 	imshow("B wall rot", matB_wall);
 	waitKey(70);
-	*/
-
+	
 	B_cells = Mat::ones( matB_free.size(), CV_16SC1)*costmap.unknown;
 	vector<Point2f> B_wall_pts, B_free_pts;
 	for(int i=0; i<matB_wall.cols; i++){
@@ -542,6 +563,46 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 	if( !costmap.cells.empty() ){
 		if( B_homography.empty() ){
 			B_homography = Mat::eye(3, 3, CV_64FC1);
+
+			/*
+			// agent0 -> agent2
+			B_homography.at<double>(0,0) = 0.9996901567421376;
+			B_homography.at<double>(0,1) = 0.02489192172118513;
+			B_homography.at<double>(0,2) = -0.2878059448341174;
+			B_homography.at<double>(1,0) = -0.02489192172118513;
+			B_homography.at<double>(1,1) = 0.9996901567421376;
+			B_homography.at<double>(1,2) = -5.681602015211894;
+			B_homography.at<double>(2,0) = 0;
+			B_homography.at<double>(2,1) = 0;
+			B_homography.at<double>(2,2) = 1;
+			*/
+
+			/*
+			//agent1 -> agent2
+			B_homography.at<double>(0,0) = 0.9992674830825189;
+			B_homography.at<double>(0,1) = -0.03827665018194062;
+			B_homography.at<double>(0,2) = 8.269605631662136;
+			B_homography.at<double>(1,0) = 0.03827665018194062;
+			B_homography.at<double>(1,1) = 0.9992674830825189;
+			B_homography.at<double>(1,2) = -5.072384234159195;
+			B_homography.at<double>(2,0) = 0;
+			B_homography.at<double>(2,1) = 0;
+			B_homography.at<double>(2,2) = 1;
+			*/
+
+
+			//agent2 -> agent1
+			B_homography.at<double>(0,0) = 0.9994431693633792;
+			B_homography.at<double>(0,1) = 0.03336954485306531;
+			B_homography.at<double>(0,2) = -7.734684314522937;
+			B_homography.at<double>(1,0) = -0.03336954485306531;
+			B_homography.at<double>(1,1) = 0.9994431693633792;
+			B_homography.at<double>(1,2) =  0.8812563454476989;
+			B_homography.at<double>(2,0) = 0;
+			B_homography.at<double>(2,1) = 0;
+			B_homography.at<double>(2,2) = 1;
+			
+
 		}
 		double dist = alignCostmap( costmap.cells, B_cells, B_homography);
 
@@ -592,6 +653,8 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 			}
 		}
 	}
+
+	cout << "B_homography: " << B_homography << endl;
 
 	namedWindow("mapUpdates B", WINDOW_NORMAL);
 	imshow("mapUpdates B", dispB);
