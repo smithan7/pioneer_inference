@@ -167,6 +167,24 @@ public:
 
 	int marketNodeSelect(World &gMap);
 	void greedyFrontiers();
+
+
+	// MoveBaseRecover Stuff
+    ros::Subscriber subResult ;
+    ros::Subscriber subCmdVel ;
+    ros::Publisher pubCmdVel ;
+    
+    ros::Time initialStoppingTime ;
+    ros::Time initialRecoveryTime ;
+    bool fGoal ;
+    bool fTimer ;
+    bool fRecovery ;
+    double thetaThreshold ;
+    double recoveryTheta ;
+    double timeThreshold ;
+    
+    void actionCallback(const actionlib_msgs::GoalStatusArray&) ;
+    void cmdVelCallback(const geometry_msgs::Twist&) ;
 };
 
 #endif /* SRC_Agent_H_ */

@@ -53,6 +53,66 @@ Agent::Agent(ros::NodeHandle nHandle){
 	//inferenceMethod = "naive";
 	inferenceMethod = "geometric";
 	//inferenceMethod = "visual";
+
+	//moveBaseRecover stuff
+	subResult = nHandle.subscribe("move_base/status", 10, &Agent::actionCallback, this) ;
+    subCmdVel = nHandle.subscribe("controller_cmd_vel", 10, &Agent::cmdVelCallback, this) ;
+    pubCmdVel = nHandle.advertise<geometry_msgs::Twist>("pioneer/cmd_vel", 10) ;
+  
+    ros::param::get("move_base/TrajectoryPlannerROS/max_vel_theta",thetaThreshold) ;
+    ROS_INFO_STREAM("Recovery behaviour with rotate robot in place at " << thetaThreshold << " rad/s") ;
+    timeThreshold = 1.0 ;
+    fGoal = false ;
+    fTimer = false ;
+    fRecovery = false ;
+}
+
+void Agent::actionCallback(const actionlib_msgs::GoalStatusArray& msg){
+  if (!msg.status_list.empty()){
+    if (msg.status_list[0].status == 1)
+      fGoal = true ;
+    else
+      fGoal = false ;
+  }
+}
+
+void Agent::cmdVelCallback(const geometry_msgs::Twist& msg){
+  geometry_msgs::Twist cmd = msg ;
+  if (fRecovery){ // recovery mode
+    ros::Duration recoveryDuration = ros::Time::now() - initialRecoveryTime ;
+    if (recoveryDuration.toSec() < 1.5) // force 1.5 second turnaround
+      cmd.angular.z = recoveryTheta ;
+    else { // exit recovery mode
+      ROS_INFO("Robot exiting recovery mode...") ;
+      fRecovery = false ;
+      fTimer = false ;
+    }
+  }
+  else if (fGoal){
+    if (fabs(msg.linear.x) < 0.001 && fabs(msg.angular.z) < thetaThreshold){
+      if (!fTimer){
+        initialStoppingTime = ros::Time::now() ;
+        fTimer = true ;
+      }
+      else{
+        ros::Duration stoppedTime = ros::Time::now() - initialStoppingTime ;
+        if (stoppedTime.toSec() > timeThreshold){
+          geometry_msgs::Twist cmd = msg ;
+          ROS_INFO("Overriding move_base command velocities to unstick robot in recovery mode...") ;
+          fRecovery = true ; // enter recovery mode
+          if (msg.angular.z < 0.0)
+            recoveryTheta = -thetaThreshold ;
+          else
+            recoveryTheta = thetaThreshold ;
+          cmd.angular.z = recoveryTheta ;
+          initialRecoveryTime = ros::Time::now() ;
+        }
+      }
+    }
+    else
+      fTimer = false ;
+  }
+  pubCmdVel.publish(cmd) ;
 }
 
 double Agent::linearDist(vector<Point2f> &sub_pts, vector<Point2f> &set_pts, vector<Point2f> &sub_matches, vector<Point2f> &set_matches, float tol){
@@ -580,7 +640,7 @@ void Agent::publishNavGoalsToMoveBase(){
 void Agent::publishRvizMarker(Point loc, float radius, int color, int id){
 	visualization_msgs::Marker marker;
     // Set the frame ID and timestamp.  See the TF tutorials for information on these.
-    marker.header.frame_id = "map";
+    marker.header.frame_id = "/map";
     marker.header.stamp = ros::Time::now();
 
     // Set the namespace and id for this marker.  This serves to create a unique ID
@@ -629,6 +689,7 @@ void Agent::publishRvizMarker(Point loc, float radius, int color, int id){
 //void Agent::marketCallBack( const vector<vector<float> > &market){}
 
 void Agent::locationCallback( const nav_msgs::Odometry& locIn){
+
 	cLoc.x = offset.x + 4.8*(locIn.pose.pose.position.y);
 	cLoc.y = offset.y + 4.8*(locIn.pose.pose.position.x);
 
