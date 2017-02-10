@@ -69,6 +69,8 @@ public:
 
     double alignCostmap( Mat &set, Mat &sub, Mat &homography);
     Mat A_homography, B_homography, A_cells, B_cells;
+    float A_angle, B_angle;
+    Point A_shift, B_shift;
     void getWallPts(Mat &mat, vector<Point2f> &pts);
     void getFreePts(Mat &mat, vector<Point2f> &pts);
 	void plotMatches( vector<Point2f> &p_set, vector<Point2f> &res, vector<Point2f> &pair);
@@ -76,7 +78,7 @@ public:
 	double linearDist(vector<Point2f> &p_sub, vector<Point2f> &p_set, vector<Point2f> &pair, vector<Point2f> &m_sub, float tol);
 	void initMap( const std_msgs::Int16MultiArray& transmission, Point shift, float angle, Mat &free, Mat &wall );
 	float fit3DofQUADRATIC(const vector<Point2f>& src_, const vector<Point2f>& dst_, float* param);
-
+	void rotatePoint( Point shift, float angle, Mat homography, Point &p, Mat &map);
 
 	void publishNavGoalsToMoveBase();
 	void publishRvizMarker(Point loc, float radius, int color, int id);
@@ -89,8 +91,8 @@ public:
 	int iterCntr, iterPeriod;
 
 	// agent stuff
-	Agent(ros::NodeHandle nh);
-	void init(int myIndex, float obsThresh, float comThresh, int numAgents);
+	Agent(ros::NodeHandle nh, int myIndex, int numAgents);
+	void init(int myIndex, int numAgents);
 	bool locationInitialized, costmapInitialized, marketInitialized;
 	void pickMyColor();
 	~Agent();

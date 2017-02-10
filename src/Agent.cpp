@@ -8,29 +8,10 @@
 
 #include "Agent.h"
 
-Agent::Agent(ros::NodeHandle nHandle){
+Agent::Agent(ros::NodeHandle nHandle, int myIndex, int numAgents){
+	A_angle = -1;
+	B_angle = -1;
 	costmap.init_flag = true;
-
-	// sensor stuff
-	costSub = nHandle.subscribe("/map", 0, &Agent::costMapCallback, this);
-	locSub = nHandle.subscribe("/odom", 1, &Agent::locationCallback, this);
-	
-	// my coordination stuff
-	this->myIndex = 0;
-	marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent2/market", 10);
-	locPub = nHandle.advertise<nav_msgs::Odometry>("/agent2/loc", 10);
-	mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent2/map", 10);
-
-	// their coordination stuff
-	marketSub_A = nHandle.subscribe("/agent0/market", 1, &Agent::marketCallback, this);
-	mapUpdatesSub_A = nHandle.subscribe("/agent0/map", 1, &Agent::mapUpdatesCallback_A, this);
-
-	marketSub_B = nHandle.subscribe("/agent1/market", 1, &Agent::marketCallback, this);
-	mapUpdatesSub_B = nHandle.subscribe("/agent1/map", 1, &Agent::mapUpdatesCallback_B, this);
-
-	// rviz stuff
-	markerPub = nHandle.advertise<visualization_msgs::Marker>("/visualization_marker", 10);
-	goalPub =  nHandle.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 10);
 
 	missionTime = ros::Time::now();
 	timeOfLastReport = ros::Time::now();
@@ -54,6 +35,55 @@ Agent::Agent(ros::NodeHandle nHandle){
 	inferenceMethod = "geometric";
 	//inferenceMethod = "visual";
 
+
+	// sensor stuff
+	costSub = nHandle.subscribe("/map", 0, &Agent::costMapCallback, this);
+	locSub = nHandle.subscribe("/odom", 1, &Agent::locationCallback, this);
+
+		// rviz stuff
+	markerPub = nHandle.advertise<visualization_msgs::Marker>("/visualization_marker", 10);
+	goalPub =  nHandle.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 10);	
+	
+	if(myIndex == 0){
+		// my coordination stuff
+		marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent0/market", 10);
+		locPub = nHandle.advertise<nav_msgs::Odometry>("/agent0/loc", 10);
+		mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent0/map", 10);
+
+		// their coordination stuff
+		marketSub_A = nHandle.subscribe("/agent1/market", 1, &Agent::marketCallback, this);
+		mapUpdatesSub_A = nHandle.subscribe("/agent1/map", 1, &Agent::mapUpdatesCallback_A, this);
+
+		marketSub_B = nHandle.subscribe("/agent2/market", 1, &Agent::marketCallback, this);
+		mapUpdatesSub_B = nHandle.subscribe("/agent2/map", 1, &Agent::mapUpdatesCallback_B, this);
+	}
+	else if(myIndex == 1){
+		// my coordination stuff
+		marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent1/market", 10);
+		locPub = nHandle.advertise<nav_msgs::Odometry>("/agent1/loc", 10);
+		mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent1/map", 10);
+
+		// their coordination stuff
+		marketSub_A = nHandle.subscribe("/agent0/market", 1, &Agent::marketCallback, this);
+		mapUpdatesSub_A = nHandle.subscribe("/agent0/map", 1, &Agent::mapUpdatesCallback_A, this);
+
+		marketSub_B = nHandle.subscribe("/agent2/market", 1, &Agent::marketCallback, this);
+		mapUpdatesSub_B = nHandle.subscribe("/agent2/map", 1, &Agent::mapUpdatesCallback_B, this);
+	}
+	else if(myIndex == 2){
+		// my coordination stuff
+		marketPub = nHandle.advertise<std_msgs::Float32MultiArray>("/agent2/market", 10);
+		locPub = nHandle.advertise<nav_msgs::Odometry>("/agent2/loc", 10);
+		mapUpdatesPub = nHandle.advertise<std_msgs::Int16MultiArray>("/agent2/map", 10);
+
+		// their coordination stuff
+		marketSub_A = nHandle.subscribe("/agent0/market", 1, &Agent::marketCallback, this);
+		mapUpdatesSub_A = nHandle.subscribe("/agent0/map", 1, &Agent::mapUpdatesCallback_A, this);
+
+		marketSub_B = nHandle.subscribe("/agent1/market", 1, &Agent::marketCallback, this);
+		mapUpdatesSub_B = nHandle.subscribe("/agent1/map", 1, &Agent::mapUpdatesCallback_B, this);
+	}
+
 	//moveBaseRecover stuff
 	subResult = nHandle.subscribe("move_base/status", 10, &Agent::actionCallback, this) ;
     subCmdVel = nHandle.subscribe("controller_cmd_vel", 10, &Agent::cmdVelCallback, this) ;
@@ -64,8 +94,40 @@ Agent::Agent(ros::NodeHandle nHandle){
     timeThreshold = 1.0 ;
     fGoal = false ;
     fTimer = false ;
-    fRecovery = false ;
+    fRecovery = false;
+
+    this->init(myIndex, numAgents);
 }
+
+void Agent::init(int myIndex, int numAgents){
+	this->obsThresh = 50;
+	this->comThresh = 50;
+	this->myIndex = myIndex;
+
+	cLoc= Point(-1,-1);
+	gLoc = Point(-1,-1);
+	gLocPrior = Point(-1,-1);
+
+	//this->myIndex = myIndex;
+	this->pickMyColor();
+
+	for(int i=0; i<numAgents; i++){
+		agentLocs.push_back( Point(-1,-1) );
+	}
+
+	market.init(numAgents, myIndex, false);
+
+	market.updatecLoc( cLoc );
+	market.updateTime( ros::Time::now().toSec() );
+	market.updategLoc( cLoc );
+	market.updateExploreCost( 0 );
+
+
+	marketInitialized = false;
+	locationInitialized = false;
+	costmapInitialized = false;
+}
+
 
 void Agent::actionCallback(const actionlib_msgs::GoalStatusArray& msg){
   if (!msg.status_list.empty()){
@@ -258,7 +320,7 @@ double Agent::alignCostmap( Mat &set, Mat &sub, Mat &homography){
 
 		sub_wall_pts = rot_wall_matches;
 
-		cout << "Param: " << param[0] << " , " << param[1] << " , " << param[2] << endl;
+		//cout << "Param: " << param[0] << " , " << param[1] << " , " << param[2] << endl;
 		if(abs(param[0]) + abs(param[1]) + abs(param[2]) < 0.01){
 			break;
 		}
@@ -362,25 +424,29 @@ float Agent::fit3DofQUADRATIC(const vector<Point2f>& src_, const vector<Point2f>
 } // fit3DofQUADRATIC()
 
 void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission ){
-	
-	// agent 0 -> agent1
-	//Point shift(10,0);
-	//float angle = 185;
 
-	// agent 1 -> agent0
-	//Point shift(-10,0);
-	//float angle = 205;
-
-	// agent2 -> agent0
-	Point shift(-10,-25);
-	float angle = 180; 
+	if(myIndex == 0){
+		// agent 0 -> agent1
+		A_shift = Point(10,0);
+		A_angle = 185;
+	}
+	else if(myIndex == 1){
+		// agent 1 -> agent0
+		A_shift = Point(-10,0);
+		A_angle = 205;
+	}
+	else if(myIndex == 2){
+		// agent2 -> agent0
+		A_shift = Point(-10,-25);
+		A_angle = 180; 
+	}
 
 	//Mat matA_wall = Mat::zeros( costmap.cells.size(), CV_8UC1 );
 	Mat matA_wall = Mat::zeros( 192, 192, CV_8UC1 );
 	Mat matA_free = Mat::zeros( matA_wall.size(), CV_8UC1 );
 	
-	initMap( transmission, shift, angle, matA_free, matA_wall );
-	
+	initMap( transmission, A_shift, A_angle, matA_free, matA_wall );
+	/*
 	namedWindow("A free rot", WINDOW_NORMAL);
 	imshow("A free rot", matA_free);
 	waitKey(70);
@@ -388,7 +454,7 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 	namedWindow("A wall rot", WINDOW_NORMAL);
 	imshow("A wall rot", matA_wall);
 	waitKey(70);
-	
+	*/
 	A_cells = Mat::ones(matA_wall.size(), CV_16SC1)*costmap.unknown;
 	vector<Point2f> A_wall_pts, A_free_pts;
 	for(int i=0; i<matA_wall.cols; i++){
@@ -410,43 +476,42 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 		if( A_homography.empty() ){
 			A_homography = Mat::eye(3, 3, CV_64FC1);
 			
-			/*
-			// agent0 -> agent1
-			A_homography.at<double>(0,0) = 0.9021490578708488;
-			A_homography.at<double>(0,1) = -0.4314247333114125;
-			A_homography.at<double>(0,2) = 74.07028346057548;
-			A_homography.at<double>(1,0) = 0.4314247333114125;
-			A_homography.at<double>(1,1) = 0.9021490578708488;
-			A_homography.at<double>(1,2) = -32.11890638977299;
-			A_homography.at<double>(2,0) = 0;
-			A_homography.at<double>(2,1) = 0;
-			A_homography.at<double>(2,2) = 1;
-			*/
-
-			/*
-			// agent1 -> agent0
-			A_homography.at<double>(0,0) = 0.9959783994237053;
-			A_homography.at<double>(0,1) = -0.08959927912193513;
-			A_homography.at<double>(0,2) = 11.58855251649272;
-			A_homography.at<double>(1,0) = 0.08959927912193513;
-			A_homography.at<double>(1,1) = 0.9959783994237053;
-			A_homography.at<double>(1,2) = -13.16001256806977;
-			A_homography.at<double>(2,0) = 0;
-			A_homography.at<double>(2,1) = 0;
-			A_homography.at<double>(2,2) = 1;
-			*/
-
-			// agent2 -> agent0
-			A_homography.at<double>(0,0) = 0.9904669908203648;
-			A_homography.at<double>(0,1) = 0.1377500043953933;
-			A_homography.at<double>(0,2) = -14.8143625208088;
-			A_homography.at<double>(1,0) = -0.1377500043953933;
-			A_homography.at<double>(1,1) = 0.9904669908203648;
-			A_homography.at<double>(1,2) = 17.87725265552533;
-			A_homography.at<double>(2,0) = 0;
-			A_homography.at<double>(2,1) = 0;
-			A_homography.at<double>(2,2) = 1;
-
+			if(myIndex == 0){
+				// agent0 -> agent1
+				A_homography.at<double>(0,0) = 0.9021490578708488;
+				A_homography.at<double>(0,1) = -0.4314247333114125;
+				A_homography.at<double>(0,2) = 74.07028346057548;
+				A_homography.at<double>(1,0) = 0.4314247333114125;
+				A_homography.at<double>(1,1) = 0.9021490578708488;
+				A_homography.at<double>(1,2) = -32.11890638977299;
+				A_homography.at<double>(2,0) = 0;
+				A_homography.at<double>(2,1) = 0;
+				A_homography.at<double>(2,2) = 1;
+			}
+			else if(myIndex == 1){
+				// agent1 -> agent0
+				A_homography.at<double>(0,0) = 0.9959783994237053;
+				A_homography.at<double>(0,1) = -0.08959927912193513;
+				A_homography.at<double>(0,2) = 11.58855251649272;
+				A_homography.at<double>(1,0) = 0.08959927912193513;
+				A_homography.at<double>(1,1) = 0.9959783994237053;
+				A_homography.at<double>(1,2) = -13.16001256806977;
+				A_homography.at<double>(2,0) = 0;
+				A_homography.at<double>(2,1) = 0;
+				A_homography.at<double>(2,2) = 1;
+			}
+			else if(myIndex == 2){
+				// agent2 -> agent0
+				A_homography.at<double>(0,0) = 0.9904669908203648;
+				A_homography.at<double>(0,1) = 0.1377500043953933;
+				A_homography.at<double>(0,2) = -14.8143625208088;
+				A_homography.at<double>(1,0) = -0.1377500043953933;
+				A_homography.at<double>(1,1) = 0.9904669908203648;
+				A_homography.at<double>(1,2) = 17.87725265552533;
+				A_homography.at<double>(2,0) = 0;
+				A_homography.at<double>(2,1) = 0;
+				A_homography.at<double>(2,2) = 1;
+			}
 		}
 
 		double dist = alignCostmap( costmap.cells, A_cells, A_homography);
@@ -477,12 +542,11 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 			}
 		}
 
-		cout << "A_homography: " << A_homography << endl;
-
+		inference.makeInference( inferenceMethod, costmap );
 		costmap.buildCellsPlot();
-		namedWindow("merged cells", WINDOW_NORMAL);
-		imshow("merged cells", costmap.displayPlot );
-		waitKey(70);
+		costmap.addAgentToCostmapPlot( myColor, myPath, cLoc);
+		costmap.addAgentToCostmapPlot( myColor, myPath, gLoc);
+		costmap.showCostmapPlot(myIndex);
 	}
 
 	Mat dispA = Mat::zeros( matA_free.size(),CV_8UC3 );
@@ -508,17 +572,21 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 
 void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission ){
 
-	// agent0 -> agent2
-	//Point shift(-10,-35);
-	//float angle = 170;
-
-	//agent 1 -> agent2
-	//Point shift(-2,-32);
-	//float angle = 15;
-
-	// agent2 -> agent1
-	Point shift(12, 32);
-	float angle = -15;
+	if(myIndex == 0){
+		// agent0 -> agent2
+		B_shift = Point(-10,-35);
+		B_angle = 170;
+	}
+	else if(myIndex == 1){
+		//agent 1 -> agent2
+		B_shift = Point(-2,-32);
+		B_angle = 15;
+	}
+	else if(myIndex == 2){
+		// agent2 -> agent1
+		B_shift = Point(12, 32);
+		B_angle = -15;
+	}
 
 	//Mat matB_wall = Mat::zeros( costmap.cells.size(), CV_8UC1 );
 	Mat matB_wall = Mat::zeros( 192, 192, CV_8UC1 );
@@ -534,8 +602,8 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 	waitKey(50);
 	*/
 
-	initMap( transmission, shift, angle, matB_free, matB_wall );
-	
+	initMap( transmission, B_shift, B_angle, matB_free, matB_wall );
+	/*
 	namedWindow("B free rot", WINDOW_NORMAL);
 	imshow("B free rot", matB_free);
 	waitKey(70);
@@ -543,7 +611,7 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 	namedWindow("B wall rot", WINDOW_NORMAL);
 	imshow("B wall rot", matB_wall);
 	waitKey(70);
-	
+	*/
 	B_cells = Mat::ones( matB_free.size(), CV_16SC1)*costmap.unknown;
 	vector<Point2f> B_wall_pts, B_free_pts;
 	for(int i=0; i<matB_wall.cols; i++){
@@ -564,44 +632,42 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 		if( B_homography.empty() ){
 			B_homography = Mat::eye(3, 3, CV_64FC1);
 
-			/*
-			// agent0 -> agent2
-			B_homography.at<double>(0,0) = 0.9996901567421376;
-			B_homography.at<double>(0,1) = 0.02489192172118513;
-			B_homography.at<double>(0,2) = -0.2878059448341174;
-			B_homography.at<double>(1,0) = -0.02489192172118513;
-			B_homography.at<double>(1,1) = 0.9996901567421376;
-			B_homography.at<double>(1,2) = -5.681602015211894;
-			B_homography.at<double>(2,0) = 0;
-			B_homography.at<double>(2,1) = 0;
-			B_homography.at<double>(2,2) = 1;
-			*/
-
-			/*
-			//agent1 -> agent2
-			B_homography.at<double>(0,0) = 0.9992674830825189;
-			B_homography.at<double>(0,1) = -0.03827665018194062;
-			B_homography.at<double>(0,2) = 8.269605631662136;
-			B_homography.at<double>(1,0) = 0.03827665018194062;
-			B_homography.at<double>(1,1) = 0.9992674830825189;
-			B_homography.at<double>(1,2) = -5.072384234159195;
-			B_homography.at<double>(2,0) = 0;
-			B_homography.at<double>(2,1) = 0;
-			B_homography.at<double>(2,2) = 1;
-			*/
-
-
-			//agent2 -> agent1
-			B_homography.at<double>(0,0) = 0.9994431693633792;
-			B_homography.at<double>(0,1) = 0.03336954485306531;
-			B_homography.at<double>(0,2) = -7.734684314522937;
-			B_homography.at<double>(1,0) = -0.03336954485306531;
-			B_homography.at<double>(1,1) = 0.9994431693633792;
-			B_homography.at<double>(1,2) =  0.8812563454476989;
-			B_homography.at<double>(2,0) = 0;
-			B_homography.at<double>(2,1) = 0;
-			B_homography.at<double>(2,2) = 1;
-			
+			if(myIndex == 0){
+				// agent0 -> agent2
+				B_homography.at<double>(0,0) = 0.9996901567421376;
+				B_homography.at<double>(0,1) = 0.02489192172118513;
+				B_homography.at<double>(0,2) = -0.2878059448341174;
+				B_homography.at<double>(1,0) = -0.02489192172118513;
+				B_homography.at<double>(1,1) = 0.9996901567421376;
+				B_homography.at<double>(1,2) = -5.681602015211894;
+				B_homography.at<double>(2,0) = 0;
+				B_homography.at<double>(2,1) = 0;
+				B_homography.at<double>(2,2) = 1;
+			}
+			else if(myIndex == 1){
+				//agent1 -> agent2
+				B_homography.at<double>(0,0) = 0.9992674830825189;
+				B_homography.at<double>(0,1) = -0.03827665018194062;
+				B_homography.at<double>(0,2) = 8.269605631662136;
+				B_homography.at<double>(1,0) = 0.03827665018194062;
+				B_homography.at<double>(1,1) = 0.9992674830825189;
+				B_homography.at<double>(1,2) = -5.072384234159195;
+				B_homography.at<double>(2,0) = 0;
+				B_homography.at<double>(2,1) = 0;
+				B_homography.at<double>(2,2) = 1;
+			}
+			else if(myIndex == 2){
+				//agent2 -> agent1
+				B_homography.at<double>(0,0) = 0.9994431693633792;
+				B_homography.at<double>(0,1) = 0.03336954485306531;
+				B_homography.at<double>(0,2) = -7.734684314522937;
+				B_homography.at<double>(1,0) = -0.03336954485306531;
+				B_homography.at<double>(1,1) = 0.9994431693633792;
+				B_homography.at<double>(1,2) =  0.8812563454476989;
+				B_homography.at<double>(2,0) = 0;
+				B_homography.at<double>(2,1) = 0;
+				B_homography.at<double>(2,2) = 1;
+			}
 
 		}
 		double dist = alignCostmap( costmap.cells, B_cells, B_homography);
@@ -632,10 +698,11 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 			}
 		}
 
+		inference.makeInference( inferenceMethod, costmap );
 		costmap.buildCellsPlot();
-		namedWindow("merged cells", WINDOW_NORMAL);
-		imshow("merged cells", costmap.displayPlot );
-		waitKey(70);
+		costmap.addAgentToCostmapPlot( myColor, myPath, cLoc);
+		costmap.addAgentToCostmapPlot( myColor, myPath, gLoc);
+		costmap.showCostmapPlot(myIndex);
 	}
 
 	Mat dispB = Mat::zeros( matB_free.size(),CV_8UC3 );
@@ -654,7 +721,7 @@ void Agent::mapUpdatesCallback_B(  const std_msgs::Int16MultiArray& transmission
 		}
 	}
 
-	cout << "B_homography: " << B_homography << endl;
+	//cout << "B_homography: " << B_homography << endl;
 
 	namedWindow("mapUpdates B", WINDOW_NORMAL);
 	imshow("mapUpdates B", dispB);
@@ -753,8 +820,8 @@ void Agent::publishRvizMarker(Point loc, float radius, int color, int id){
 
 void Agent::locationCallback( const nav_msgs::Odometry& locIn){
 
-	cLoc.x = offset.x + 4.8*(locIn.pose.pose.position.y);
-	cLoc.y = offset.y + 4.8*(locIn.pose.pose.position.x);
+	cLoc.x = offset.x + 9.6*(locIn.pose.pose.position.y);
+	cLoc.y = offset.y + 9.6*(locIn.pose.pose.position.x);
 
 	market.updatecLoc( cLoc );
 
@@ -791,9 +858,47 @@ void Agent::publishMarket(){
 
 void Agent::marketCallback( const std_msgs::Float32MultiArray& transmission){
 	ROS_ERROR("Agent had market callback");
-	market.dissasembleTransmission( transmission );
-	market.printMarket();
-	marketInitialized = true;
+
+	if( !A_homography.empty() && !B_homography.empty() && A_angle != -1 && B_angle != -1){
+
+		market.dissasembleTransmission( transmission);
+
+		if(myIndex == 0){
+			rotatePoint( A_shift, A_angle, A_homography, market.cLocs[1], costmap.cells);
+			rotatePoint( A_shift, A_angle, A_homography, market.gLocs[1], costmap.cells);
+			rotatePoint( B_shift, B_angle, B_homography, market.cLocs[2], costmap.cells);
+			rotatePoint( B_shift, B_angle, B_homography, market.gLocs[2], costmap.cells);
+		}
+		else if(myIndex == 1){
+			rotatePoint( A_shift, A_angle, A_homography, market.cLocs[0], costmap.cells);
+			rotatePoint( A_shift, A_angle, A_homography, market.gLocs[0], costmap.cells);
+			rotatePoint( B_shift, B_angle, B_homography, market.cLocs[2], costmap.cells);
+			rotatePoint( B_shift, B_angle, B_homography, market.gLocs[2], costmap.cells);
+		}
+		else if(myIndex == 2){
+			rotatePoint( A_shift, A_angle, A_homography, market.cLocs[0], costmap.cells);
+			rotatePoint( A_shift, A_angle, A_homography, market.gLocs[0], costmap.cells);
+			rotatePoint( B_shift, B_angle, B_homography, market.cLocs[1], costmap.cells);
+			rotatePoint( B_shift, B_angle, B_homography, market.gLocs[1], costmap.cells);
+		}
+		market.printMarket();
+		marketInitialized = true;
+	}
+}
+
+void Agent::rotatePoint( Point shift, float angle, Mat homography, Point &p, Mat &map){
+
+	p.x += shift.x;
+	p.y += shift.y;
+
+	Point2f src_center(map.cols/2.0F, map.rows/2.0F);
+	Mat rot_mat = getRotationMatrix2D(src_center, angle, 1.0);
+	p.x = p.x*rot_mat.at<double>(0,0) - p.y*rot_mat.at<double>(0,1);
+	p.y = p.x*rot_mat.at<double>(1,0) + p.y*rot_mat.at<double>(1,1);
+
+	p.x = p.x*homography.at<double>(0,0) - p.y*homography.at<double>(0,1) + homography.at<double>(0,2);
+	p.y = p.x*homography.at<double>(1,0) + p.y*homography.at<double>(1,1) + homography.at<double>(1,2);
+
 }
 
 void Agent::costMapCallback(const nav_msgs::OccupancyGrid& cost_in ){
@@ -820,7 +925,8 @@ void Agent::costMapCallback(const nav_msgs::OccupancyGrid& cost_in ){
 
 	costmap.buildCellsPlot();
 	costmap.addAgentToCostmapPlot( myColor, myPath, cLoc);
-	costmap.addAgentToCostmapPlot( myColor, myPath, oLoc);
+	costmap.addAgentToCostmapPlot( myColor, myPath, gLoc);
+
 	costmap.showCostmapPlot(0);
 }
 
@@ -951,34 +1057,6 @@ void Agent::planExplore(string planMethod ){
 		}
 	}
 	market.updategLoc(gLoc);
-}
-
-void Agent::init(int myIndex, float obsThresh, float comThresh, int numAgents){
-	this->obsThresh = obsThresh;
-	this->comThresh = comThresh;
-	
-	cLoc= Point(-1,-1);
-	gLoc = Point(-1,-1);
-	gLocPrior = Point(-1,-1);
-
-	//this->myIndex = myIndex;
-	this->pickMyColor();
-
-	for(int i=0; i<numAgents; i++){
-		agentLocs.push_back( Point(-1,-1) );
-	}
-
-	market.init(numAgents, myIndex, false);
-
-	market.updatecLoc( cLoc );
-	market.updateTime( ros::Time::now().toSec() );
-	market.updategLoc( cLoc );
-	market.updateExploreCost( 0 );
-
-
-	marketInitialized = false;
-	locationInitialized = false;
-	costmapInitialized = false;
 }
 
 void Agent::act(){

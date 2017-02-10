@@ -9,17 +9,14 @@
 int main(int argc, char *argv[])
 {
 	// initialization
-	ros::init(argc, argv, "agent0");
+	ros::init(argc, argv, "agent2");
 
 	ros::NodeHandle nHandle("~");
 
-	float obsThresh = 50;
-	float comThresh = 50;
-	int myIndex = 1;
+	int myIndex = 2;
 	int numAgents = 3;
-
-	Agent *agent = new Agent(nHandle);
-	agent->init(myIndex, obsThresh, comThresh, numAgents);
+	Agent *agent = new Agent(nHandle, myIndex, numAgents);
+	
 
 	// return the control to ROS
 	ros::spin();
