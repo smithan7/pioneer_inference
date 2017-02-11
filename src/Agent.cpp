@@ -544,8 +544,18 @@ void Agent::mapUpdatesCallback_A(  const std_msgs::Int16MultiArray& transmission
 
 		inference.makeInference( inferenceMethod, costmap );
 		costmap.buildCellsPlot();
-		costmap.addAgentToCostmapPlot( myColor, myPath, cLoc);
-		costmap.addAgentToCostmapPlot( myColor, myPath, gLoc);
+		//costmap.addAgentToCostmapPlot( myColor, myPath, cLoc);
+		//costmap.addAgentToCostmapPlot( myColor, myPath, gLoc);
+
+		costmap.addAgentToCostmapPlot(Scalar(255,0,0), myPath, market.cLocs[0]);
+		costmap.addAgentToCostmapPlot(Scalar(127,0,0), myPath, market.gLocs[0]);
+
+		costmap.addAgentToCostmapPlot(Scalar(0,255,0), myPath, market.cLocs[1]);
+		costmap.addAgentToCostmapPlot(Scalar(0,127,0), myPath, market.gLocs[1]);
+
+		costmap.addAgentToCostmapPlot(Scalar(0,0,255), myPath, market.cLocs[2]);
+		costmap.addAgentToCostmapPlot(Scalar(0,0,127), myPath, market.gLocs[2]);
+		
 		costmap.showCostmapPlot(myIndex);
 	}
 
@@ -816,8 +826,6 @@ void Agent::publishRvizMarker(Point loc, float radius, int color, int id){
     markerPub.publish(marker);
 }
 
-//void Agent::marketCallBack( const vector<vector<float> > &market){}
-
 void Agent::locationCallback( const nav_msgs::Odometry& locIn){
 
 	cLoc.x = offset.x + 9.6*(locIn.pose.pose.position.y);
@@ -864,6 +872,8 @@ void Agent::marketCallback( const std_msgs::Float32MultiArray& transmission){
 		market.dissasembleTransmission( transmission);
 
 		if(myIndex == 0){
+
+
 			rotatePoint( A_shift, A_angle, A_homography, market.cLocs[1], costmap.cells);
 			rotatePoint( A_shift, A_angle, A_homography, market.gLocs[1], costmap.cells);
 			rotatePoint( B_shift, B_angle, B_homography, market.cLocs[2], costmap.cells);
@@ -876,10 +886,17 @@ void Agent::marketCallback( const std_msgs::Float32MultiArray& transmission){
 			rotatePoint( B_shift, B_angle, B_homography, market.gLocs[2], costmap.cells);
 		}
 		else if(myIndex == 2){
+
+			cout << "market cLocs[0]/gLocs[0]: " << market.cLocs[0] << " , " << market.gLocs[0] << endl;
+			cout << "A_shift / A_angle: " << A_shift << " / " << A_angle << endl;
+			cout << "A_homography: " << A_homography << endl; 
+
 			rotatePoint( A_shift, A_angle, A_homography, market.cLocs[0], costmap.cells);
 			rotatePoint( A_shift, A_angle, A_homography, market.gLocs[0], costmap.cells);
 			rotatePoint( B_shift, B_angle, B_homography, market.cLocs[1], costmap.cells);
 			rotatePoint( B_shift, B_angle, B_homography, market.gLocs[1], costmap.cells);
+
+			cout << "market cLocs[0]/gLocs[0]: " << market.cLocs[0] << " , " << market.gLocs[0] << endl;
 		}
 		market.printMarket();
 		marketInitialized = true;
@@ -893,11 +910,18 @@ void Agent::rotatePoint( Point shift, float angle, Mat homography, Point &p, Mat
 
 	Point2f src_center(map.cols/2.0F, map.rows/2.0F);
 	Mat rot_mat = getRotationMatrix2D(src_center, angle, 1.0);
-	p.x = p.x*rot_mat.at<double>(0,0) - p.y*rot_mat.at<double>(0,1);
-	p.y = p.x*rot_mat.at<double>(1,0) + p.y*rot_mat.at<double>(1,1);
+	Point2f pf;
+	pf.x = rot_mat.at<double>(0,0)*float(p.x)+rot_mat.at<double>(0,1)*float(p.y)+rot_mat.at<double>(0,2);
+	pf.y = rot_mat.at<double>(1,0)*float(p.x)+rot_mat.at<double>(1,1)*float(p.y)+rot_mat.at<double>(1,2);
 
-	p.x = p.x*homography.at<double>(0,0) - p.y*homography.at<double>(0,1) + homography.at<double>(0,2);
-	p.y = p.x*homography.at<double>(1,0) + p.y*homography.at<double>(1,1) + homography.at<double>(1,2);
+
+	pf.x = pf.x*B_homography.at<double>(0,0) + pf.y*B_homography.at<double>(0,1) + B_homography.at<double>(0,2);
+	pf.y = pf.x*B_homography.at<double>(1,0) + pf.y*B_homography.at<double>(1,1) + B_homography.at<double>(1,2);
+
+	cout << "pf' : " << pf << endl;
+
+	p.x = round(pf.x);
+	p.y = round(pf.y);
 
 }
 

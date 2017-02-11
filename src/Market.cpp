@@ -21,6 +21,8 @@ void Market::init(int nAgents, int myIndex, bool enableRelaySacrifice) {
 		// explore stuff
 		cLocs.push_back(a);
 		gLocs.push_back(a);
+		cRaw.push_back(a);
+		gRaw.push_back(a);
 		exploreCosts.push_back(0);
 
 		// report stuff
@@ -53,10 +55,10 @@ std_msgs::Float32MultiArray Market::assembleTransmission(){
 
 	std_msgs::Float32MultiArray transmission;
 	for(int i=0; i<nAgents+1; i++){ // +1 is to account for observer
-		transmission.data.push_back( cLocs[i].x ); // 0
-		transmission.data.push_back( cLocs[i].y); // 1
-		transmission.data.push_back( gLocs[i].x); // 2
-		transmission.data.push_back( gLocs[i].y); // 3
+		transmission.data.push_back( cRaw[i].x ); // 0
+		transmission.data.push_back( cRaw[i].y); // 1
+		transmission.data.push_back( gRaw[i].x); // 2
+		transmission.data.push_back( gRaw[i].y); // 3
 		transmission.data.push_back( exploreCosts[i]); // 4
 
 		transmission.data.push_back( reportTimes[i]); // 5
@@ -83,8 +85,15 @@ void Market::dissasembleTransmission(const std_msgs::Float32MultiArray& transmis
 			cLocs[i].x = transmission.data[i*transmissionLength];
 			cLocs[i].y = transmission.data[i*transmissionLength+1];
 
+			cRaw[i].x = transmission.data[i*transmissionLength];
+			cRaw[i].y = transmission.data[i*transmissionLength+1];
+
 			gLocs[i].x = transmission.data[i*transmissionLength+2];
 			gLocs[i].y = transmission.data[i*transmissionLength+3];
+
+			gRaw[i].x = transmission.data[i*transmissionLength+2];
+			gRaw[i].y = transmission.data[i*transmissionLength+3];
+
 			exploreCosts[i] = transmission.data[i*transmissionLength+4];
 
 			reportTimes[i] = transmission.data[i*transmissionLength+5];

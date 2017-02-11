@@ -40,8 +40,8 @@ public:
 	void dissasembleTransmission(const std_msgs::Float32MultiArray &transmission);
 	std_msgs::Float32MultiArray assembleTransmission();
 
-	vector<Point> cLocs;
-	vector<Point> gLocs;
+	vector<Point> cLocs, cRaw;
+	vector<Point> gLocs, gRaw;
 	vector<float> exploreCosts; // distance to explore
 
 	vector<Point> rLocs; // relay loc
